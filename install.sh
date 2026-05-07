@@ -190,7 +190,7 @@ EOS
 ensure_deps() {
   progress 5 "preparando dependências"
   apt-get update -y >/dev/null
-  DEBIAN_FRONTEND=noninteractive apt-get install -y git curl wget ca-certificates tar build-essential sqlite3 jq >/dev/null
+  DEBIAN_FRONTEND=noninteractive apt-get install -y git curl wget ca-certificates tar build-essential sqlite3 jq python3 >/dev/null
 }
 
 ensure_go() {
@@ -242,6 +242,107 @@ DRAGONCORE_PHP_BIN=php
 EOS
   fi
 }
+
+apply_expiration_hours_patch() {
+  progress 55 "ajustando validade em horas/dias"
+  cd "$SRC_DIR"
+
+  python3 <<'PYEOF'
+from pathlib import Path
+
+base = Path('.')
+helper = base / 'src/domain/usecase/user/expiration_format.go'
+helper.write_text("""package user_use_case
+
+import (
+	\"fmt\"
+	\"math\"
+	\"time\"
+)
+
+func expirationRemainingInfo(expiresAt time.Time) (string, int, string) {
+	remaining := time.Until(expiresAt)
+	if remaining <= 0 {
+		return \"expirado\", 0, \"expired\"
+	}
+
+	hours := int(math.Ceil(remaining.Hours()))
+	if hours < 1 {
+		hours = 1
+	}
+
+	// Acessos de horas devem aparecer como horas.
+	// 2h, 4h, 8h e 24h ficam como horas.
+	// Acima de 24h, mostra em dias.
+	if hours <= 24 {
+		return fmt.Sprintf(\"%dh\", hours), hours, \"hours\"
+	}
+
+	days := int(math.Ceil(remaining.Hours() / 24))
+	if days < 1 {
+		days = 1
+	}
+
+	if days == 1 {
+		return \"1 dia\", days, \"days\"
+	}
+
+	return fmt.Sprintf(\"%d dias\", days), days, \"days\"
+}
+""")
+
+
+def patch_checkuser_go(path: Path):
+    if not path.exists():
+        return
+    s = path.read_text()
+    if 'ExpiresIn' not in s:
+        s = s.replace('ExpiresDays int    `json:"expiration_days"`', 'ExpiresDays int    `json:"expiration_days"`\n\tExpiresIn   string `json:"expires_in"`\n\tRemaining   string `json:"expiration_remaining"`\n\tDisplay     string `json:"expiration_display"`\n\tRemainValue int    `json:"expiration_value"`\n\tRemainUnit  string `json:"expiration_unit"`')
+    if 'expirationRemainingInfo(user.ExpiresAt)' not in s:
+        ret = 'return &CheckUserOutput{\n\t\tID:'
+        if ret in s:
+            s = s.replace(ret, 'remainingLabel, remainingValue, remainingUnit := expirationRemainingInfo(user.ExpiresAt)\n\n\treturn &CheckUserOutput{\n\t\tID:', 1)
+    old = 'ExpiresDays: int(time.Until(user.ExpiresAt).Hours() / 24),'
+    new = 'ExpiresDays: int(time.Until(user.ExpiresAt).Hours() / 24),\n\t\tExpiresIn:   remainingLabel,\n\t\tRemaining:   remainingLabel,\n\t\tDisplay:     remainingLabel,\n\t\tRemainValue: remainingValue,\n\t\tRemainUnit:  remainingUnit,'
+    if old in s and 'ExpiresIn:   remainingLabel' not in s:
+        s = s.replace(old, new, 1)
+    path.write_text(s)
+
+
+def patch_details_go(path: Path):
+    if not path.exists():
+        return
+    s = path.read_text()
+    if 'ExpiresIn' not in s:
+        s = s.replace('ExpiresDays int    `json:"expires_days"`', 'ExpiresDays int    `json:"expires_days"`\n\tExpiresIn   string `json:"expires_in"`\n\tRemaining   string `json:"expiration_remaining"`\n\tDisplay     string `json:"expiration_display"`\n\tRemainValue int    `json:"expiration_value"`\n\tRemainUnit  string `json:"expiration_unit"`')
+    if 'expirationRemainingInfo(user.ExpiresAt)' not in s:
+        ret = 'return &DetailUserOutput{\n\t\tID:'
+        if ret in s:
+            s = s.replace(ret, 'remainingLabel, remainingValue, remainingUnit := expirationRemainingInfo(user.ExpiresAt)\n\n\treturn &DetailUserOutput{\n\t\tID:', 1)
+    old = 'ExpiresDays: int(time.Until(user.ExpiresAt).Hours() / 24),'
+    new = 'ExpiresDays: int(time.Until(user.ExpiresAt).Hours() / 24),\n\t\tExpiresIn:   remainingLabel,\n\t\tRemaining:   remainingLabel,\n\t\tDisplay:     remainingLabel,\n\t\tRemainValue: remainingValue,\n\t\tRemainUnit:  remainingUnit,'
+    if old in s and 'ExpiresIn:   remainingLabel' not in s:
+        s = s.replace(old, new, 1)
+    path.write_text(s)
+
+
+def patch_index_html(path: Path):
+    if not path.exists():
+        return
+    s = path.read_text()
+    s = s.replace("expiresAtElement.innerHTML = data.expires_at ?? ''", "expiresAtElement.innerHTML = data.expires_in ?? data.expires_at ?? ''")
+    path.write_text(s)
+
+patch_checkuser_go(base / 'src/domain/usecase/user/checkuser.go')
+patch_details_go(base / 'src/domain/usecase/user/details.go')
+patch_index_html(base / 'src/infra/http/index_html.go')
+PYEOF
+
+  if command -v gofmt >/dev/null 2>&1; then
+    gofmt -w src/domain/usecase/user/expiration_format.go src/domain/usecase/user/checkuser.go src/domain/usecase/user/details.go 2>/dev/null || true
+  fi
+}
+
 
 build_binary() {
   progress 75 "compilando CheckUser"
@@ -797,6 +898,7 @@ install_checkuser() {
     ensure_deps
     ensure_go
     clone_or_update_repo
+    apply_expiration_hours_patch
     write_env
     normalize_public_host_env
     build_binary
