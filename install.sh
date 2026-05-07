@@ -67,6 +67,90 @@ detect_go_arch() {
   esac
 }
 
+get_public_ip() {
+  local ip=""
+  if command -v curl >/dev/null 2>&1; then
+    ip="$(curl -4 -fsS --max-time 4 https://api.ipify.org 2>/dev/null || true)"
+    if [[ -z "$ip" ]]; then
+      ip="$(curl -4 -fsS --max-time 4 https://ifconfig.me/ip 2>/dev/null || true)"
+    fi
+  fi
+  if [[ -z "$ip" ]]; then
+    ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  fi
+  echo "$ip"
+}
+
+
+normalize_public_host_env() {
+  local detected current
+  detected="$(get_public_ip)"
+  [[ -f "$ENV_FILE" ]] || return 0
+
+  current="$(grep -E '^CHECKUSER_PUBLIC_HOST=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' || true)"
+
+  # Se ficou placeholder de instalação anterior, vazio, localhost ou loopback, troca pelo IP público detectado.
+  if [[ -n "$detected" ]]; then
+    if [[ -z "$current" || "$current" == "SEU_IP_PUBLICO" || "$current" == "IP_DA_VPS" || "$current" == "IP_PUBLICO_DA_VPS" || "$current" == "127.0.0.1" || "$current" == "localhost" ]]; then
+      if grep -qE '^CHECKUSER_PUBLIC_HOST=' "$ENV_FILE"; then
+        sed -i "s|^CHECKUSER_PUBLIC_HOST=.*|CHECKUSER_PUBLIC_HOST=${detected}|" "$ENV_FILE"
+      else
+        echo "CHECKUSER_PUBLIC_HOST=${detected}" >> "$ENV_FILE"
+      fi
+    fi
+  fi
+}
+
+is_placeholder_host() {
+  local host="$1"
+  [[ -z "$host" || "$host" == "SEU_IP_PUBLICO" || "$host" == "IP_DA_VPS" || "$host" == "IP_PUBLICO_DA_VPS" || "$host" == "127.0.0.1" || "$host" == "localhost" ]]
+}
+
+
+normalize_domain_input() {
+  local value="$1"
+  value="${value#http://}"
+  value="${value#https://}"
+  value="${value%%/*}"
+  value="${value%%\?*}"
+  value="${value%%:*}"
+  value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  printf '%s' "$value"
+}
+
+set_env_key() {
+  local key="$1"
+  local value="$2"
+  mkdir -p "$ENV_DIR"
+  touch "$ENV_FILE"
+  chmod 600 "$ENV_FILE" 2>/dev/null || true
+  if grep -qE "^${key}=" "$ENV_FILE"; then
+    sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
+  else
+    echo "${key}=${value}" >> "$ENV_FILE"
+  fi
+}
+
+get_cloudflare_url() {
+  local domain=""
+  if [[ -f "$ENV_FILE" ]]; then
+    domain="$(grep -E '^CHECKUSER_CLOUDFLARE_DOMAIN=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' || true)"
+  fi
+  if [[ -n "$domain" ]]; then
+    printf 'https://%s' "$domain"
+  fi
+}
+
+open_checkuser_port_if_possible() {
+  # O CheckUser escuta em 0.0.0.0:2052. Aqui liberamos a porta no firewall local quando o UFW estiver ativo.
+  if command -v ufw >/dev/null 2>&1; then
+    if ufw status 2>/dev/null | grep -qi "Status: active"; then
+      ufw allow 2052/tcp >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+
 install_official_go() {
   local arch tarball url tmp
   arch="$(detect_go_arch)"
@@ -106,7 +190,7 @@ EOS
 ensure_deps() {
   progress 5 "preparando dependências"
   apt-get update -y >/dev/null
-  DEBIAN_FRONTEND=noninteractive apt-get install -y git curl wget ca-certificates tar build-essential sqlite3 >/dev/null
+  DEBIAN_FRONTEND=noninteractive apt-get install -y git curl wget ca-certificates tar build-essential sqlite3 jq >/dev/null
 }
 
 ensure_go() {
@@ -144,7 +228,11 @@ write_env() {
     cat > "$ENV_FILE" <<'EOS'
 CHECKUSER_HOST=0.0.0.0
 CHECKUSER_PORT=2052
+CHECKUSER_PUBLIC_HOST=
 CHECKUSER_SSL=
+CHECKUSER_CLOUDFLARE_DOMAIN=
+CHECKUSER_CLOUDFLARE_URL=
+CHECKUSER_CLOUDFLARE_API_TOKEN=
 CHECKUSER_DB_PATH=/root/db.sqlite3
 CHECKUSER_USUARIOS_DB_PATH=/root/usuarios.db
 CHECKUSER_BOT_USERS_LOG=/etc/tg-access-bot/users.jsonl
@@ -199,42 +287,465 @@ GREEN='\033[1;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[1;36m'
 NC='\033[0m'
+ENV_FILE="/etc/checkuser/checkuser.env"
 
 pause() {
   echo ""
   read -r -p "Pressione ENTER para continuar..." _ || true
 }
 
+installed_status_text() {
+  if [[ -x /usr/local/bin/checkuser && -f /etc/systemd/system/checkuser.service ]]; then
+    echo -e "${GREEN}Instalado${NC}"
+  else
+    echo -e "${RED}Não instalado${NC}"
+  fi
+}
+
+load_env() {
+  if [[ -f "$ENV_FILE" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +a
+  fi
+}
+
+sql_escape() {
+  printf "%s" "$1" | sed "s/'/''/g"
+}
+
+get_public_ip() {
+  local ip=""
+  if command -v curl >/dev/null 2>&1; then
+    ip="$(curl -4 -fsS --max-time 4 https://api.ipify.org 2>/dev/null || true)"
+    if [[ -z "$ip" ]]; then
+      ip="$(curl -4 -fsS --max-time 4 https://ifconfig.me/ip 2>/dev/null || true)"
+    fi
+  fi
+  if [[ -z "$ip" ]]; then
+    ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  fi
+  echo "$ip"
+}
+
+normalize_domain_input() {
+  local value="$1"
+  value="${value#http://}"
+  value="${value#https://}"
+  value="${value%%/*}"
+  value="${value%%\?*}"
+  value="${value%%:*}"
+  value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  printf '%s' "$value"
+}
+
+set_env_key() {
+  local key="$1"
+  local value="$2"
+  mkdir -p /etc/checkuser
+  touch "$ENV_FILE"
+  chmod 600 "$ENV_FILE" 2>/dev/null || true
+  if grep -qE "^${key}=" "$ENV_FILE"; then
+    sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
+  else
+    echo "${key}=${value}" >> "$ENV_FILE"
+  fi
+}
+
+get_cloudflare_url() {
+  local domain=""
+  if [[ -f "$ENV_FILE" ]]; then
+    domain="$(grep -E '^CHECKUSER_CLOUDFLARE_DOMAIN=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' || true)"
+  fi
+  if [[ -n "$domain" ]]; then
+    printf 'https://%s' "$domain"
+  fi
+}
+
+configure_cloudflare_menu() {
+  local ip domain cf_url
+  ip="$(get_public_ip)"
+  clear
+  echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║${NC}        ${YELLOW}CONFIGURAR CLOUDFLARE${NC}                ${CYAN}║${NC}"
+  echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
+  echo ""
+  echo "Use domínio/subdomínio, exemplo: check.seudominio.com"
+  echo "O link final será: https://dominio.com/?user=USUARIO"
+  echo ""
+  read -r -p "Domínio/Subdomínio: " domain
+  domain="$(normalize_domain_input "$domain")"
+  if [[ -z "$domain" || "$domain" != *.* ]]; then
+    echo -e "${RED}Domínio inválido.${NC}"
+    pause
+    return
+  fi
+  cf_url="https://${domain}"
+  set_env_key CHECKUSER_CLOUDFLARE_DOMAIN "$domain"
+  set_env_key CHECKUSER_CLOUDFLARE_URL "$cf_url"
+  set_env_key CHECKUSER_PUBLIC_HOST "$domain"
+  echo ""
+  echo -e "${GREEN}Configuração local salva.${NC}"
+  echo ""
+  echo -e "${YELLOW}Configure na Cloudflare:${NC}"
+  echo "1. DNS → A → ${domain} → ${ip:-IP_PUBLICO_DA_VPS} → Proxy ativado"
+  echo "2. Rules → Origin Rules → Create rule"
+  echo "   Expressão: http.host eq "${domain}""
+  echo "   Destination Port: Rewrite to 2052"
+  echo "3. Link do app: ${cf_url}/?user=USUARIO"
+  echo "4. UUID: ${cf_url}/?user=UUID_DO_XRAY"
+  echo ""
+  echo -e "${YELLOW}Atenção:${NC} se o CheckUser estiver em HTTP puro na origem, use modo SSL compatível com HTTP até a origem ou proxy local/Nginx."
+  pause
+}
+
+clear_deviceid() {
+  load_env
+  local db="${CHECKUSER_DB_PATH:-/root/db.sqlite3}"
+  clear
+  echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║${NC}        ${YELLOW}LIMPAR DEVICEID${NC}                      ${CYAN}║${NC}"
+  echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
+  echo ""
+
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    echo -e "${RED}sqlite3 não encontrado. Instale com: apt install sqlite3 -y${NC}"
+    pause
+    return
+  fi
+
+  if [[ ! -f "$db" ]]; then
+    echo -e "${RED}Banco do CheckUser não encontrado:${NC} $db"
+    pause
+    return
+  fi
+
+  if ! sqlite3 "$db" "SELECT name FROM sqlite_master WHERE type='table' AND name='devices';" | grep -qx devices; then
+    echo -e "${YELLOW}Tabela devices ainda não existe nesse banco.${NC}"
+    echo "Ela será criada pelo CheckUser quando houver primeiro uso com deviceid."
+    pause
+    return
+  fi
+
+  echo "1. Limpar DeviceID de um usuário"
+  echo "2. Limpar DeviceID de todos"
+  echo "0. Voltar"
+  echo ""
+  read -r -p "Escolha: " opt
+
+  case "$opt" in
+    1|01)
+      read -r -p "Usuário: " username
+      if [[ -z "$username" ]]; then
+        echo -e "${RED}Usuário vazio.${NC}"
+        pause
+        return
+      fi
+      local escaped count
+      escaped="$(sql_escape "$username")"
+      count="$(sqlite3 "$db" "SELECT COUNT(*) FROM devices WHERE username='${escaped}';" 2>/dev/null || echo 0)"
+      sqlite3 "$db" "DELETE FROM devices WHERE username='${escaped}';" >/dev/null
+      echo -e "${GREEN}DeviceID limpo para ${username}.${NC} Removidos: ${count}"
+      pause
+      ;;
+    2|02)
+      read -r -p "Digite SIM para limpar todos os DeviceIDs: " confirm
+      if [[ "$confirm" != "SIM" ]]; then
+        echo -e "${YELLOW}Operação cancelada.${NC}"
+        pause
+        return
+      fi
+      local count
+      count="$(sqlite3 "$db" "SELECT COUNT(*) FROM devices;" 2>/dev/null || echo 0)"
+      sqlite3 "$db" "DELETE FROM devices;" >/dev/null
+      echo -e "${GREEN}Todos os DeviceIDs foram limpos.${NC} Removidos: ${count}"
+      pause
+      ;;
+    0|00) return ;;
+    *) echo -e "${RED}Opção inválida.${NC}"; sleep 1 ;;
+  esac
+}
+
+test_endpoint_menu() {
+  read -r -p "Digite usuário ou UUID: " user
+  if [[ -n "$user" ]]; then
+    echo -e "${CYAN}Local:${NC} http://127.0.0.1:2052?user=${user}"
+    curl -s "http://127.0.0.1:2052?user=${user}" || true
+    echo ""
+    cf_url="$(get_cloudflare_url)"
+    if [[ -n "$cf_url" ]]; then
+      echo -e "${CYAN}Cloudflare:${NC} ${cf_url}/?user=${user}"
+    fi
+  else
+    echo -e "${RED}Usuário vazio.${NC}"
+  fi
+  pause
+}
+
+
+
+cf_api_request() {
+  local token="$1"
+  local method="$2"
+  local endpoint="$3"
+  local data="${4:-}"
+  local url="https://api.cloudflare.com/client/v4${endpoint}"
+
+  if [[ -n "$data" ]]; then
+    curl -sS -X "$method" "$url" \
+      -H "Authorization: Bearer ${token}" \
+      -H "Content-Type: application/json" \
+      --data "$data"
+  else
+    curl -sS -X "$method" "$url" \
+      -H "Authorization: Bearer ${token}" \
+      -H "Content-Type: application/json"
+  fi
+}
+
+cf_require_success() {
+  local response="$1"
+  local label="$2"
+  local ok
+  ok="$(printf '%s' "$response" | jq -r '.success // false' 2>/dev/null || echo false)"
+  if [[ "$ok" != "true" ]]; then
+    echo -e "${RED}Falha: ${label}.${NC}"
+    printf '%s' "$response" | jq -r '(.errors // [])[] | "- " + (.message // tostring)' 2>/dev/null || true
+    return 1
+  fi
+  return 0
+}
+
+read_cf_token() {
+  local saved=""
+  if [[ -f "$ENV_FILE" ]]; then
+    saved="$(grep -E '^CHECKUSER_CLOUDFLARE_API_TOKEN=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' || true)"
+  fi
+
+  if [[ -n "$saved" ]]; then
+    read -r -p "Usar token Cloudflare salvo? [S/n]: " use_saved
+    if [[ -z "$use_saved" || "$use_saved" =~ ^[Ss]$ ]]; then
+      printf '%s' "$saved"
+      return 0
+    fi
+  fi
+
+  local token=""
+  read -r -s -p "Token API Cloudflare: " token
+  echo ""
+  if [[ -z "$token" ]]; then
+    echo -e "${RED}Token vazio.${NC}" >&2
+    return 1
+  fi
+  read -r -p "Salvar token nesta VPS para próximas configurações? [S/n]: " save_token
+  if [[ -z "$save_token" || "$save_token" =~ ^[Ss]$ ]]; then
+    set_env_key CHECKUSER_CLOUDFLARE_API_TOKEN "$token"
+  fi
+  printf '%s' "$token"
+}
+
+build_cf_hostname() {
+  local zone_name="$1"
+  local sub="$2"
+  sub="$(printf '%s' "$sub" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  sub="${sub#http://}"
+  sub="${sub#https://}"
+  sub="${sub%%/*}"
+  sub="${sub%%\?*}"
+  sub="${sub%%:*}"
+
+  if [[ -z "$sub" || "$sub" == "@" ]]; then
+    printf '%s' "$zone_name"
+  elif [[ "$sub" == *.* ]]; then
+    if [[ "$sub" == "$zone_name" || "$sub" == *".${zone_name}" ]]; then
+      printf '%s' "$sub"
+    else
+      return 1
+    fi
+  else
+    printf '%s.%s' "$sub" "$zone_name"
+  fi
+}
+
+cf_create_or_update_dns() {
+  local token="$1"
+  local zone_id="$2"
+  local fqdn="$3"
+  local ip="$4"
+  local response record_id body
+
+  response="$(cf_api_request "$token" GET "/zones/${zone_id}/dns_records?type=A&name=${fqdn}")"
+  cf_require_success "$response" "consultar DNS" || return 1
+  record_id="$(printf '%s' "$response" | jq -r '.result[0].id // empty')"
+
+  body="$(jq -n --arg name "$fqdn" --arg content "$ip" '{type:"A", name:$name, content:$content, ttl:1, proxied:true}')"
+  if [[ -n "$record_id" ]]; then
+    response="$(cf_api_request "$token" PUT "/zones/${zone_id}/dns_records/${record_id}" "$body")"
+    cf_require_success "$response" "atualizar DNS" || return 1
+    echo -e "${GREEN}DNS atualizado:${NC} ${fqdn} → ${ip} / proxy ativo"
+  else
+    response="$(cf_api_request "$token" POST "/zones/${zone_id}/dns_records" "$body")"
+    cf_require_success "$response" "criar DNS" || return 1
+    echo -e "${GREEN}DNS criado:${NC} ${fqdn} → ${ip} / proxy ativo"
+  fi
+}
+
+cf_create_or_update_origin_rule() {
+  local token="$1"
+  local zone_id="$2"
+  local fqdn="$3"
+  local rulesets ruleset_id response full ref body
+
+  rulesets="$(cf_api_request "$token" GET "/zones/${zone_id}/rulesets")"
+  cf_require_success "$rulesets" "listar regras de origem" || return 1
+  ruleset_id="$(printf '%s' "$rulesets" | jq -r '.result[] | select(.phase=="http_request_origin" and .kind=="zone") | .id' | head -n1)"
+
+  if [[ -z "$ruleset_id" ]]; then
+    body='{"name":"CheckUser DTunnel Origin Rules","kind":"zone","phase":"http_request_origin","rules":[]}'
+    response="$(cf_api_request "$token" POST "/zones/${zone_id}/rulesets" "$body")"
+    cf_require_success "$response" "criar ruleset de origem" || return 1
+    ruleset_id="$(printf '%s' "$response" | jq -r '.result.id')"
+  fi
+
+  full="$(cf_api_request "$token" GET "/zones/${zone_id}/rulesets/${ruleset_id}")"
+  cf_require_success "$full" "ler ruleset de origem" || return 1
+  ref="checkuser_dtunnel_$(printf '%s' "$fqdn" | sed 's/[^A-Za-z0-9_]/_/g')"
+
+  body="$(printf '%s' "$full" | jq --arg fqdn "$fqdn" --arg ref "$ref" '
+    .result.rules as $rules |
+    {
+      rules: (
+        ($rules // [] | map(select((.ref // "") != $ref and (.description // "") != ("CheckUser DTunnel - " + $fqdn) and (.expression // "") != ("http.host eq \"" + $fqdn + "\""))))
+        + [{
+          ref: $ref,
+          expression: ("http.host eq \"" + $fqdn + "\""),
+          description: ("CheckUser DTunnel - " + $fqdn),
+          action: "route",
+          action_parameters: { origin: { port: 2052 } }
+        }]
+      )
+    }
+  ')"
+
+  response="$(cf_api_request "$token" PUT "/zones/${zone_id}/rulesets/${ruleset_id}" "$body")"
+  cf_require_success "$response" "criar/atualizar Origin Rule" || return 1
+  echo -e "${GREEN}Origin Rule criada/atualizada:${NC} ${fqdn} → porta 2052"
+}
+
+configure_cloudflare_menu() {
+  clear
+  echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║${NC}        ${YELLOW}CLOUDFLARE AUTOMÁTICO${NC}                ${CYAN}║${NC}"
+  echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
+  echo ""
+  echo "Permissões necessárias no token: Zone Read, DNS Edit e Rulesets/Origin Write."
+  echo ""
+
+  if ! command -v jq >/dev/null 2>&1; then
+    echo -e "${YELLOW}Instalando jq...${NC}"
+    apt-get update -y >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y jq >/dev/null
+  fi
+
+  local token zones count choice idx zone_id zone_name sub fqdn ip response cf_url
+  token="$(read_cf_token)" || { pause; return; }
+
+  zones="$(cf_api_request "$token" GET "/zones?per_page=100")"
+  cf_require_success "$zones" "conectar/listar domínios da Cloudflare" || { pause; return; }
+  count="$(printf '%s' "$zones" | jq '.result | length')"
+  if [[ "$count" -lt 1 ]]; then
+    echo -e "${RED}Nenhum domínio encontrado nessa conta/token.${NC}"
+    pause
+    return
+  fi
+
+  echo -e "${CYAN}Domínios encontrados:${NC}"
+  printf '%s' "$zones" | jq -r '.result | to_entries[] | "\(.key + 1). \(.value.name)"'
+  echo ""
+  read -r -p "Escolha o domínio: " choice
+  if ! [[ "$choice" =~ ^[0-9]+$ ]] || [[ "$choice" -lt 1 || "$choice" -gt "$count" ]]; then
+    echo -e "${RED}Opção inválida.${NC}"
+    pause
+    return
+  fi
+
+  idx=$((choice - 1))
+  zone_id="$(printf '%s' "$zones" | jq -r ".result[$idx].id")"
+  zone_name="$(printf '%s' "$zones" | jq -r ".result[$idx].name")"
+
+  echo ""
+  echo "Digite o subdomínio. Exemplos: check, api, vpn"
+  echo "Deixe vazio ou use @ para usar o domínio raiz: ${zone_name}"
+  read -r -p "Subdomínio: " sub
+  fqdn="$(build_cf_hostname "$zone_name" "$sub")" || {
+    echo -e "${RED}Subdomínio inválido para a zona ${zone_name}.${NC}"
+    pause
+    return
+  }
+
+  if ! [[ "$fqdn" =~ ^[a-z0-9.-]+$ ]]; then
+    echo -e "${RED}Host inválido: ${fqdn}${NC}"
+    pause
+    return
+  fi
+
+  ip="$(get_public_ip)"
+  if [[ -z "$ip" ]]; then
+    read -r -p "IP público da VPS: " ip
+  else
+    read -r -p "IP público detectado (${ip}). Pressione ENTER para usar ou digite outro: " response
+    [[ -n "$response" ]] && ip="$response"
+  fi
+
+  if [[ -z "$ip" ]]; then
+    echo -e "${RED}IP público vazio.${NC}"
+    pause
+    return
+  fi
+
+  cf_create_or_update_dns "$token" "$zone_id" "$fqdn" "$ip" || { pause; return; }
+  cf_create_or_update_origin_rule "$token" "$zone_id" "$fqdn" || { pause; return; }
+
+  cf_url="https://${fqdn}"
+  set_env_key CHECKUSER_CLOUDFLARE_DOMAIN "$fqdn"
+  set_env_key CHECKUSER_CLOUDFLARE_URL "$cf_url"
+  set_env_key CHECKUSER_PUBLIC_HOST "$fqdn"
+
+  echo ""
+  echo -e "${GREEN}✅ Cloudflare configurado com sucesso.${NC}"
+  echo "Link do app: ${cf_url}/?user="
+  echo "Teste: ${cf_url}/?user=USUARIO"
+  echo "UUID:  ${cf_url}/?user=UUID_DO_XRAY"
+  echo ""
+  echo -e "${YELLOW}Observação:${NC} se usar HTTPS no domínio e o CheckUser estiver em HTTP puro, confira o modo SSL da Cloudflare ou use proxy local/Nginx."
+  pause
+}
+
 while true; do
   clear
-  echo -e "${CYAN}╔══════════════════════════════════════╗${NC}"
-  echo -e "${CYAN}║${NC} ${YELLOW}CHECKUSER PRIMECEL${NC}                   ${CYAN}║${NC}"
-  echo -e "${CYAN}╚══════════════════════════════════════╝${NC}"
-  echo "1. Status"
-  echo "2. Logs"
-  echo "3. Reiniciar serviço"
-  echo "4. Testar endpoint"
-  echo "5. Editar configuração"
-  echo "6. Reinstalar/Atualizar"
-  echo "0. Sair"
+  installed="$(installed_status_text)"
+
+  echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║${NC}        ${YELLOW}CHECKUSER DTUNNEL${NC}                    ${CYAN}║${NC}"
+  echo -e "${CYAN}╠══════════════════════════════════════════════╣${NC}"
+  echo -e "${CYAN}║${NC} Status: ${installed}"
+  echo -e "${CYAN}╠══════════════════════════════════════════════╣${NC}"
+  echo -e "${CYAN}║${NC} ${GREEN}1${NC}. Reiniciar serviço"
+  echo -e "${CYAN}║${NC} ${GREEN}2${NC}. Limpar DeviceID"
+  echo -e "${CYAN}║${NC} ${GREEN}3${NC}. Testar endpoint"
+  echo -e "${CYAN}║${NC} ${GREEN}4${NC}. Editar configuração"
+  echo -e "${CYAN}║${NC} ${GREEN}5${NC}. Reinstalar/Atualizar"
+  echo -e "${CYAN}║${NC} ${GREEN}6${NC}. Configurar Cloudflare automático"
+  echo -e "${CYAN}║${NC} ${RED}0${NC}. Sair"
+  echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
   echo ""
   read -r -p "Escolha: " opt
   case "$opt" in
-    1|01) systemctl status checkuser --no-pager || true; pause ;;
-    2|02) journalctl -u checkuser -n 100 --no-pager || true; pause ;;
-    3|03) systemctl restart checkuser; echo -e "${GREEN}Serviço reiniciado.${NC}"; pause ;;
-    4|04)
-      read -r -p "Digite usuário ou UUID: " user
-      if [[ -n "$user" ]]; then
-        curl -s "http://127.0.0.1:2052?user=${user}" || true
-        echo ""
-      else
-        echo -e "${RED}Usuário vazio.${NC}"
-      fi
-      pause
-      ;;
-    5|05) ${EDITOR:-nano} /etc/checkuser/checkuser.env; systemctl restart checkuser || true; pause ;;
-    6|06)
+    1|01) systemctl restart checkuser; echo -e "${GREEN}Serviço reiniciado.${NC}"; pause ;;
+    2|02) clear_deviceid ;;
+    3|03) test_endpoint_menu ;;
+    4|04) ${EDITOR:-nano} /etc/checkuser/checkuser.env; systemctl restart checkuser || true; pause ;;
+    5|05)
       if [[ -x /opt/checkuser-installer/install.sh ]]; then
         sudo bash /opt/checkuser-installer/install.sh
       else
@@ -243,6 +754,7 @@ while true; do
         pause
       fi
       ;;
+    6|06) configure_cloudflare_menu ;;
     0|00) exit 0 ;;
     *) echo -e "${RED}Opção inválida.${NC}"; sleep 1 ;;
   esac
@@ -270,6 +782,7 @@ EOS
     chmod +x /opt/checkuser-installer/install.sh
   fi
 
+  open_checkuser_port_if_possible
   systemctl daemon-reload
   systemctl enable checkuser >/dev/null 2>&1
   systemctl restart checkuser
@@ -285,16 +798,43 @@ install_checkuser() {
     ensure_go
     clone_or_update_repo
     write_env
+    normalize_public_host_env
     build_binary
     write_service_and_menu
   } 2>&1 | tee -a "$LOG_DIR/install.log"
 
+  local public_ip public_host cloudflare_url
+  public_ip="$(get_public_ip)"
+  cloudflare_url="$(get_cloudflare_url)"
+  public_host="$public_ip"
+  if [[ -f "$ENV_FILE" ]]; then
+    local configured_public
+    configured_public="$(grep -E '^CHECKUSER_PUBLIC_HOST=' "$ENV_FILE" | tail -1 | cut -d= -f2- | tr -d '"' || true)"
+    if [[ -n "$configured_public" ]] && ! is_placeholder_host "$configured_public"; then
+      public_host="$configured_public"
+    elif is_placeholder_host "$configured_public"; then
+      public_host="$public_ip"
+    fi
+  fi
+
   echo ""
   echo -e "${GREEN}✅ CheckUser instalado/atualizado com sucesso.${NC}"
-  echo -e "Link original: ${CYAN}http://127.0.0.1:2052${NC}"
-  echo "Consulta: http://127.0.0.1:2052?user=USUARIO"
-  echo "Consulta UUID: http://127.0.0.1:2052?user=UUID_DO_XRAY"
+  echo -e "Local: ${CYAN}http://127.0.0.1:2052${NC}"
+  if [[ -n "$cloudflare_url" ]]; then
+    echo -e "Cloudflare: ${CYAN}${cloudflare_url}${NC}"
+    echo "Consulta: ${cloudflare_url}?user=USUARIO"
+    echo "Consulta UUID: ${cloudflare_url}?user=UUID_DO_XRAY"
+  elif [[ -n "$public_host" ]]; then
+    echo -e "Público: ${CYAN}http://${public_host}:2052${NC}"
+    echo "Consulta: http://${public_host}:2052?user=USUARIO"
+    echo "Consulta UUID: http://${public_host}:2052?user=UUID_DO_XRAY"
+  else
+    echo -e "${YELLOW}IP público não detectado automaticamente.${NC}"
+    echo "Consulta pública: http://IP_DA_VPS:2052?user=USUARIO"
+  fi
   echo "Menu: checkuser-menu"
+  echo ""
+  echo -e "${YELLOW}Observação:${NC} se a VPS estiver em AWS/Oracle/Google/Hostinger, libere a porta 2052 no firewall/security group da nuvem."
   pause
 }
 
@@ -324,27 +864,435 @@ test_endpoint() {
   if [[ -z "$test_user" ]]; then
     echo -e "${RED}Usuário vazio.${NC}"
   else
+    echo -e "${CYAN}Teste local:${NC} http://127.0.0.1:2052?user=${test_user}"
     curl -s "http://127.0.0.1:2052?user=${test_user}" || true
     echo ""
+    public_ip="$(get_public_ip)"
+    if [[ -f "$ENV_FILE" ]]; then
+      configured_public="$(grep -E '^CHECKUSER_PUBLIC_HOST=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' || true)"
+      if [[ -n "$configured_public" ]] && ! is_placeholder_host "$configured_public"; then
+        public_ip="$configured_public"
+      fi
+    fi
+    cloudflare_url="$(get_cloudflare_url)"
+    if [[ -n "$cloudflare_url" ]]; then
+      echo -e "${CYAN}Link Cloudflare:${NC} ${cloudflare_url}?user=${test_user}"
+    elif [[ -n "$public_ip" ]]; then
+      echo -e "${CYAN}Link público:${NC} http://${public_ip}:2052?user=${test_user}"
+    fi
   fi
   pause
 }
 
-show_menu() {
+
+load_checkuser_env() {
+  if [[ -f "$ENV_FILE" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +a
+  fi
+}
+
+sql_escape() {
+  printf "%s" "$1" | sed "s/'/''/g"
+}
+
+clear_deviceid() {
+  require_root
+  load_checkuser_env
+  local db="${CHECKUSER_DB_PATH:-/root/db.sqlite3}"
   clear
-  echo -e "${CYAN}╔══════════════════════════════════════╗${NC}"
-  echo -e "${CYAN}║${NC} ${YELLOW}CHECKUSER PRIMECEL - DIRETO${NC}          ${CYAN}║${NC}"
-  echo -e "${CYAN}╚══════════════════════════════════════╝${NC}"
-  echo "Repo: $REPO_URL"
-  echo "Porta: 2052"
+  echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║${NC}        ${YELLOW}LIMPAR DEVICEID${NC}                      ${CYAN}║${NC}"
+  echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
   echo ""
-  echo "1. Instalar/Atualizar CheckUser"
-  echo "2. Reinstalar CheckUser"
-  echo "3. Desinstalar CheckUser"
-  echo "4. Status"
-  echo "5. Logs"
-  echo "6. Testar endpoint"
-  echo "0. Sair"
+
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    echo -e "${RED}sqlite3 não encontrado. Instale com: apt install sqlite3 -y${NC}"
+    pause
+    return
+  fi
+
+  if [[ ! -f "$db" ]]; then
+    echo -e "${RED}Banco do CheckUser não encontrado:${NC} $db"
+    pause
+    return
+  fi
+
+  if ! sqlite3 "$db" "SELECT name FROM sqlite_master WHERE type='table' AND name='devices';" | grep -qx devices; then
+    echo -e "${YELLOW}Tabela devices ainda não existe nesse banco.${NC}"
+    echo "Ela será criada pelo CheckUser quando houver primeiro uso com deviceid."
+    pause
+    return
+  fi
+
+  echo "1. Limpar DeviceID de um usuário"
+  echo "2. Limpar DeviceID de todos"
+  echo "0. Voltar"
+  echo ""
+  read -r -p "Escolha: " opt
+
+  case "$opt" in
+    1|01)
+      read -r -p "Usuário: " username
+      if [[ -z "$username" ]]; then
+        echo -e "${RED}Usuário vazio.${NC}"
+        pause
+        return
+      fi
+      local escaped count
+      escaped="$(sql_escape "$username")"
+      count="$(sqlite3 "$db" "SELECT COUNT(*) FROM devices WHERE username='${escaped}';" 2>/dev/null || echo 0)"
+      sqlite3 "$db" "DELETE FROM devices WHERE username='${escaped}';" >/dev/null
+      echo -e "${GREEN}DeviceID limpo para ${username}.${NC} Removidos: ${count}"
+      pause
+      ;;
+    2|02)
+      read -r -p "Digite SIM para limpar todos os DeviceIDs: " confirm
+      if [[ "$confirm" != "SIM" ]]; then
+        echo -e "${YELLOW}Operação cancelada.${NC}"
+        pause
+        return
+      fi
+      local count
+      count="$(sqlite3 "$db" "SELECT COUNT(*) FROM devices;" 2>/dev/null || echo 0)"
+      sqlite3 "$db" "DELETE FROM devices;" >/dev/null
+      echo -e "${GREEN}Todos os DeviceIDs foram limpos.${NC} Removidos: ${count}"
+      pause
+      ;;
+    0|00) return ;;
+    *) echo -e "${RED}Opção inválida.${NC}"; sleep 1 ;;
+  esac
+}
+
+
+configure_cloudflare() {
+  require_root
+  clear
+  local ip domain cf_url
+  ip="$(get_public_ip)"
+
+  echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║${NC}        ${YELLOW}CONFIGURAR CLOUDFLARE${NC}                ${CYAN}║${NC}"
+  echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
+  echo ""
+  echo "Use um domínio ou subdomínio, exemplo: check.seudominio.com"
+  echo "O link final ficará assim: https://dominio.com/?user=USUARIO"
+  echo ""
+  read -r -p "Domínio/Subdomínio: " domain
+  domain="$(normalize_domain_input "$domain")"
+
+  if [[ -z "$domain" || "$domain" != *.* ]]; then
+    echo -e "${RED}Domínio inválido.${NC}"
+    pause
+    return
+  fi
+
+  cf_url="https://${domain}"
+  set_env_key "CHECKUSER_CLOUDFLARE_DOMAIN" "$domain"
+  set_env_key "CHECKUSER_CLOUDFLARE_URL" "$cf_url"
+  set_env_key "CHECKUSER_PUBLIC_HOST" "$domain"
+
+  echo ""
+  echo -e "${GREEN}Configuração local salva.${NC}"
+  echo ""
+  echo -e "${YELLOW}Agora configure no painel da Cloudflare:${NC}"
+  echo ""
+  echo "1. DNS"
+  echo "   Tipo: A"
+  echo "   Nome: ${domain}"
+  echo "   IPv4: ${ip:-IP_PUBLICO_DA_VPS}"
+  echo "   Proxy: Ativado / nuvem laranja"
+  echo ""
+  echo "2. Rules → Origin Rules → Create rule"
+  echo "   Nome: CheckUser DTunnel"
+  echo "   Expressão: http.host eq \"${domain}\""
+  echo "   Destination Port: Rewrite to 2052"
+  echo ""
+  echo "3. Link para usar no app"
+  echo "   ${cf_url}/?user=USUARIO"
+  echo "   ${cf_url}/?user=UUID_DO_XRAY"
+  echo ""
+  echo -e "${YELLOW}Importante:${NC} se seu CheckUser estiver em HTTP puro na porta 2052, o modo SSL da Cloudflare precisa permitir conexão HTTP até a origem ou você deve usar um proxy local como Nginx."
+  pause
+}
+
+
+
+cf_api_request() {
+  local token="$1"
+  local method="$2"
+  local endpoint="$3"
+  local data="${4:-}"
+  local url="https://api.cloudflare.com/client/v4${endpoint}"
+
+  if [[ -n "$data" ]]; then
+    curl -sS -X "$method" "$url" \
+      -H "Authorization: Bearer ${token}" \
+      -H "Content-Type: application/json" \
+      --data "$data"
+  else
+    curl -sS -X "$method" "$url" \
+      -H "Authorization: Bearer ${token}" \
+      -H "Content-Type: application/json"
+  fi
+}
+
+cf_require_success() {
+  local response="$1"
+  local label="$2"
+  local ok
+  ok="$(printf '%s' "$response" | jq -r '.success // false' 2>/dev/null || echo false)"
+  if [[ "$ok" != "true" ]]; then
+    echo -e "${RED}Falha: ${label}.${NC}"
+    printf '%s' "$response" | jq -r '(.errors // [])[] | "- " + (.message // tostring)' 2>/dev/null || true
+    return 1
+  fi
+  return 0
+}
+
+read_cf_token() {
+  local saved=""
+  if [[ -f "$ENV_FILE" ]]; then
+    saved="$(grep -E '^CHECKUSER_CLOUDFLARE_API_TOKEN=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' || true)"
+  fi
+
+  if [[ -n "$saved" ]]; then
+    read -r -p "Usar token Cloudflare salvo? [S/n]: " use_saved
+    if [[ -z "$use_saved" || "$use_saved" =~ ^[Ss]$ ]]; then
+      printf '%s' "$saved"
+      return 0
+    fi
+  fi
+
+  local token=""
+  read -r -s -p "Token API Cloudflare: " token
+  echo ""
+  if [[ -z "$token" ]]; then
+    echo -e "${RED}Token vazio.${NC}" >&2
+    return 1
+  fi
+  read -r -p "Salvar token nesta VPS para próximas configurações? [S/n]: " save_token
+  if [[ -z "$save_token" || "$save_token" =~ ^[Ss]$ ]]; then
+    set_env_key CHECKUSER_CLOUDFLARE_API_TOKEN "$token"
+  fi
+  printf '%s' "$token"
+}
+
+build_cf_hostname() {
+  local zone_name="$1"
+  local sub="$2"
+  sub="$(printf '%s' "$sub" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  sub="${sub#http://}"
+  sub="${sub#https://}"
+  sub="${sub%%/*}"
+  sub="${sub%%\?*}"
+  sub="${sub%%:*}"
+
+  if [[ -z "$sub" || "$sub" == "@" ]]; then
+    printf '%s' "$zone_name"
+  elif [[ "$sub" == *.* ]]; then
+    if [[ "$sub" == "$zone_name" || "$sub" == *".${zone_name}" ]]; then
+      printf '%s' "$sub"
+    else
+      return 1
+    fi
+  else
+    printf '%s.%s' "$sub" "$zone_name"
+  fi
+}
+
+cf_create_or_update_dns() {
+  local token="$1"
+  local zone_id="$2"
+  local fqdn="$3"
+  local ip="$4"
+  local response record_id body
+
+  response="$(cf_api_request "$token" GET "/zones/${zone_id}/dns_records?type=A&name=${fqdn}")"
+  cf_require_success "$response" "consultar DNS" || return 1
+  record_id="$(printf '%s' "$response" | jq -r '.result[0].id // empty')"
+
+  body="$(jq -n --arg name "$fqdn" --arg content "$ip" '{type:"A", name:$name, content:$content, ttl:1, proxied:true}')"
+  if [[ -n "$record_id" ]]; then
+    response="$(cf_api_request "$token" PUT "/zones/${zone_id}/dns_records/${record_id}" "$body")"
+    cf_require_success "$response" "atualizar DNS" || return 1
+    echo -e "${GREEN}DNS atualizado:${NC} ${fqdn} → ${ip} / proxy ativo"
+  else
+    response="$(cf_api_request "$token" POST "/zones/${zone_id}/dns_records" "$body")"
+    cf_require_success "$response" "criar DNS" || return 1
+    echo -e "${GREEN}DNS criado:${NC} ${fqdn} → ${ip} / proxy ativo"
+  fi
+}
+
+cf_create_or_update_origin_rule() {
+  local token="$1"
+  local zone_id="$2"
+  local fqdn="$3"
+  local rulesets ruleset_id response full ref body
+
+  rulesets="$(cf_api_request "$token" GET "/zones/${zone_id}/rulesets")"
+  cf_require_success "$rulesets" "listar regras de origem" || return 1
+  ruleset_id="$(printf '%s' "$rulesets" | jq -r '.result[] | select(.phase=="http_request_origin" and .kind=="zone") | .id' | head -n1)"
+
+  if [[ -z "$ruleset_id" ]]; then
+    body='{"name":"CheckUser DTunnel Origin Rules","kind":"zone","phase":"http_request_origin","rules":[]}'
+    response="$(cf_api_request "$token" POST "/zones/${zone_id}/rulesets" "$body")"
+    cf_require_success "$response" "criar ruleset de origem" || return 1
+    ruleset_id="$(printf '%s' "$response" | jq -r '.result.id')"
+  fi
+
+  full="$(cf_api_request "$token" GET "/zones/${zone_id}/rulesets/${ruleset_id}")"
+  cf_require_success "$full" "ler ruleset de origem" || return 1
+  ref="checkuser_dtunnel_$(printf '%s' "$fqdn" | sed 's/[^A-Za-z0-9_]/_/g')"
+
+  body="$(printf '%s' "$full" | jq --arg fqdn "$fqdn" --arg ref "$ref" '
+    .result.rules as $rules |
+    {
+      rules: (
+        ($rules // [] | map(select((.ref // "") != $ref and (.description // "") != ("CheckUser DTunnel - " + $fqdn) and (.expression // "") != ("http.host eq \"" + $fqdn + "\""))))
+        + [{
+          ref: $ref,
+          expression: ("http.host eq \"" + $fqdn + "\""),
+          description: ("CheckUser DTunnel - " + $fqdn),
+          action: "route",
+          action_parameters: { origin: { port: 2052 } }
+        }]
+      )
+    }
+  ')"
+
+  response="$(cf_api_request "$token" PUT "/zones/${zone_id}/rulesets/${ruleset_id}" "$body")"
+  cf_require_success "$response" "criar/atualizar Origin Rule" || return 1
+  echo -e "${GREEN}Origin Rule criada/atualizada:${NC} ${fqdn} → porta 2052"
+}
+
+configure_cloudflare() {
+  require_root
+  clear
+  echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║${NC}        ${YELLOW}CLOUDFLARE AUTOMÁTICO${NC}                ${CYAN}║${NC}"
+  echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
+  echo ""
+  echo "Permissões necessárias no token: Zone Read, DNS Edit e Rulesets/Origin Write."
+  echo ""
+
+  if ! command -v jq >/dev/null 2>&1; then
+    echo -e "${YELLOW}Instalando jq...${NC}"
+    apt-get update -y >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y jq >/dev/null
+  fi
+
+  local token zones count choice idx zone_id zone_name sub fqdn ip response cf_url
+  token="$(read_cf_token)" || { pause; return; }
+
+  zones="$(cf_api_request "$token" GET "/zones?per_page=100")"
+  cf_require_success "$zones" "conectar/listar domínios da Cloudflare" || { pause; return; }
+  count="$(printf '%s' "$zones" | jq '.result | length')"
+  if [[ "$count" -lt 1 ]]; then
+    echo -e "${RED}Nenhum domínio encontrado nessa conta/token.${NC}"
+    pause
+    return
+  fi
+
+  echo -e "${CYAN}Domínios encontrados:${NC}"
+  printf '%s' "$zones" | jq -r '.result | to_entries[] | "\(.key + 1). \(.value.name)"'
+  echo ""
+  read -r -p "Escolha o domínio: " choice
+  if ! [[ "$choice" =~ ^[0-9]+$ ]] || [[ "$choice" -lt 1 || "$choice" -gt "$count" ]]; then
+    echo -e "${RED}Opção inválida.${NC}"
+    pause
+    return
+  fi
+
+  idx=$((choice - 1))
+  zone_id="$(printf '%s' "$zones" | jq -r ".result[$idx].id")"
+  zone_name="$(printf '%s' "$zones" | jq -r ".result[$idx].name")"
+
+  echo ""
+  echo "Digite o subdomínio. Exemplos: check, api, vpn"
+  echo "Deixe vazio ou use @ para usar o domínio raiz: ${zone_name}"
+  read -r -p "Subdomínio: " sub
+  fqdn="$(build_cf_hostname "$zone_name" "$sub")" || {
+    echo -e "${RED}Subdomínio inválido para a zona ${zone_name}.${NC}"
+    pause
+    return
+  }
+
+  if ! [[ "$fqdn" =~ ^[a-z0-9.-]+$ ]]; then
+    echo -e "${RED}Host inválido: ${fqdn}${NC}"
+    pause
+    return
+  fi
+
+  ip="$(get_public_ip)"
+  if [[ -z "$ip" ]]; then
+    read -r -p "IP público da VPS: " ip
+  else
+    read -r -p "IP público detectado (${ip}). Pressione ENTER para usar ou digite outro: " response
+    [[ -n "$response" ]] && ip="$response"
+  fi
+
+  if [[ -z "$ip" ]]; then
+    echo -e "${RED}IP público vazio.${NC}"
+    pause
+    return
+  fi
+
+  cf_create_or_update_dns "$token" "$zone_id" "$fqdn" "$ip" || { pause; return; }
+  cf_create_or_update_origin_rule "$token" "$zone_id" "$fqdn" || { pause; return; }
+
+  cf_url="https://${fqdn}"
+  set_env_key CHECKUSER_CLOUDFLARE_DOMAIN "$fqdn"
+  set_env_key CHECKUSER_CLOUDFLARE_URL "$cf_url"
+  set_env_key CHECKUSER_PUBLIC_HOST "$fqdn"
+
+  echo ""
+  echo -e "${GREEN}✅ Cloudflare configurado com sucesso.${NC}"
+  echo "Link do app: ${cf_url}/?user="
+  echo "Teste: ${cf_url}/?user=USUARIO"
+  echo "UUID:  ${cf_url}/?user=UUID_DO_XRAY"
+  echo ""
+  echo -e "${YELLOW}Observação:${NC} se usar HTTPS no domínio e o CheckUser estiver em HTTP puro, confira o modo SSL da Cloudflare ou use proxy local/Nginx."
+  pause
+}
+
+install_status_text() {
+  if [[ -x "$BIN_PATH" && -f "$SERVICE_FILE" ]]; then
+    echo -e "${GREEN}Instalado${NC}"
+  else
+    echo -e "${RED}Não instalado${NC}"
+  fi
+}
+
+service_status_text() {
+  if [[ ! -f "$SERVICE_FILE" ]]; then
+    echo -e "${YELLOW}Não criado${NC}"
+  elif systemctl is-active --quiet checkuser 2>/dev/null; then
+    echo -e "${GREEN}Online${NC}"
+  else
+    echo -e "${RED}Offline${NC}"
+  fi
+}
+
+show_menu() {
+  local installed
+  installed="$(install_status_text)"
+
+  clear
+  echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║${NC}        ${YELLOW}CHECKUSER DTUNNEL${NC}                    ${CYAN}║${NC}"
+  echo -e "${CYAN}╠══════════════════════════════════════════════╣${NC}"
+  echo -e "${CYAN}║${NC} Status: ${installed}"
+  echo -e "${CYAN}╠══════════════════════════════════════════════╣${NC}"
+  echo -e "${CYAN}║${NC} ${GREEN}1${NC}. Instalar/Atualizar CheckUser"
+  echo -e "${CYAN}║${NC} ${GREEN}2${NC}. Reinstalar CheckUser"
+  echo -e "${CYAN}║${NC} ${GREEN}3${NC}. Desinstalar CheckUser"
+  echo -e "${CYAN}║${NC} ${GREEN}4${NC}. Limpar DeviceID"
+  echo -e "${CYAN}║${NC} ${GREEN}5${NC}. Testar endpoint"
+  echo -e "${CYAN}║${NC} ${GREEN}6${NC}. Configurar Cloudflare automático"
+  echo -e "${CYAN}║${NC} ${RED}0${NC}. Sair"
+  echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
   echo ""
   echo -n "Escolha: "
 }
@@ -357,9 +1305,9 @@ main() {
       1|01) install_checkuser ;;
       2|02) uninstall_checkuser; install_checkuser ;;
       3|03) uninstall_checkuser ;;
-      4|04) show_status ;;
-      5|05) show_logs ;;
-      6|06) test_endpoint ;;
+      4|04) clear_deviceid ;;
+      5|05) test_endpoint ;;
+      6|06) configure_cloudflare ;;
       0|00) exit 0 ;;
       *) echo -e "${RED}Opção inválida.${NC}"; sleep 1 ;;
     esac
