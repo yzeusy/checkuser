@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/DTunnel0/CheckUser-Go/src/domain/contract"
+	"github.com/yzeusy/checkuser/src/domain/contract"
 )
 
 type AUXOpenVPNConnection interface {

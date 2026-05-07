@@ -3,8 +3,8 @@ package user_handler
 import (
 	"context"
 
-	user_use_case "github.com/DTunnel0/CheckUser-Go/src/domain/usecase/user"
-	"github.com/DTunnel0/CheckUser-Go/src/infra/handler"
+	user_use_case "github.com/yzeusy/checkuser/src/domain/usecase/user"
+	"github.com/yzeusy/checkuser/src/infra/handler"
 )
 
 type detailUserHandler struct {

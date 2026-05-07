@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"regexp"
 
-	"github.com/DTunnel0/CheckUser-Go/src/domain/contract"
+	"github.com/yzeusy/checkuser/src/domain/contract"
 )
 
 type sshConnection struct {

@@ -2,13 +2,16 @@
 set -euo pipefail
 
 APP_NAME="checkuser"
-INSTALL_DIR="/opt/checkuser-primecel"
+REPO_URL="${CHECKUSER_REPO_URL:-https://github.com/yzeusy/checkuser.git}"
+BRANCH="${CHECKUSER_BRANCH:-main}"
+SRC_DIR="/opt/checkuser-src"
 BIN_PATH="/usr/local/bin/checkuser"
 STARTER_PATH="/usr/local/bin/checkuser-start"
 MENU_PATH="/usr/local/bin/checkuser-menu"
 ENV_DIR="/etc/checkuser"
 ENV_FILE="$ENV_DIR/checkuser.env"
 SERVICE_FILE="/etc/systemd/system/checkuser.service"
+LOG_DIR="/var/log/checkuser-installer"
 GO_VERSION="${GO_VERSION:-1.22.12}"
 MIN_GO_VERSION="${MIN_GO_VERSION:-1.20.0}"
 
@@ -30,6 +33,20 @@ require_root() {
 pause() {
   echo ""
   read -r -p "Pressione ENTER para continuar..." _ || true
+}
+
+progress() {
+  local percent="$1"
+  local text="$2"
+  local width=30
+  local filled=$((percent * width / 100))
+  local empty=$((width - filled))
+  local bar
+  bar="$(printf '%*s' "$filled" '' | tr ' ' '#')$(printf '%*s' "$empty" '' | tr ' ' '-')"
+  printf '\r[%s] %3d%% - %s' "$bar" "$percent" "$text"
+  if [[ "$percent" -ge 100 ]]; then
+    printf '\n'
+  fi
 }
 
 version_ge() {
@@ -57,11 +74,12 @@ install_official_go() {
     echo -e "${RED}Arquitetura não suportada automaticamente: $(uname -m)${NC}"
     exit 1
   fi
+
   tarball="go${GO_VERSION}.linux-${arch}.tar.gz"
   url="https://go.dev/dl/${tarball}"
   tmp="/tmp/${tarball}"
 
-  echo -e "${BLUE}==>${NC} Instalando Go oficial ${GO_VERSION} (${arch})..."
+  progress 20 "baixando Go ${GO_VERSION}"
   rm -f "$tmp"
   if command -v curl >/dev/null 2>&1; then
     curl -fsSL -o "$tmp" "$url"
@@ -70,15 +88,15 @@ install_official_go() {
   fi
 
   if [[ ! -s "$tmp" ]]; then
-    echo -e "${RED}Erro ao baixar Go em: $url${NC}"
+    echo -e "\n${RED}Erro ao baixar Go em: $url${NC}"
     exit 1
   fi
 
+  progress 35 "instalando Go"
   rm -rf /usr/local/go
   tar -C /usr/local -xzf "$tmp"
   ln -sf /usr/local/go/bin/go /usr/local/bin/go
   ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
-
   cat > /etc/profile.d/go.sh <<'EOS'
 export PATH=/usr/local/go/bin:$PATH
 EOS
@@ -86,45 +104,41 @@ EOS
 }
 
 ensure_deps() {
-  echo -e "${BLUE}==>${NC} Instalando dependências..."
-  apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y git curl wget ca-certificates tar build-essential sqlite3
+  progress 5 "preparando dependências"
+  apt-get update -y >/dev/null
+  DEBIAN_FRONTEND=noninteractive apt-get install -y git curl wget ca-certificates tar build-essential sqlite3 >/dev/null
 }
 
 ensure_go() {
   local cur
   cur="$(current_go_version || true)"
   if [[ -n "$cur" ]] && version_ge "$cur" "$MIN_GO_VERSION"; then
-    echo -e "${GREEN}Go encontrado: $cur${NC}"
+    progress 35 "Go encontrado: $cur"
     return 0
-  fi
-
-  if [[ -n "$cur" ]]; then
-    echo -e "${YELLOW}Go antigo encontrado: $cur. Mínimo: $MIN_GO_VERSION${NC}"
-  else
-    echo -e "${YELLOW}Go não encontrado.${NC}"
   fi
   install_official_go
 }
 
-copy_sources() {
-  local src_dir
-  src_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  mkdir -p "$INSTALL_DIR"
-  if command -v rsync >/dev/null 2>&1; then
-    rsync -a --delete --exclude '.git' "$src_dir/" "$INSTALL_DIR/"
-  else
-    rm -rf "$INSTALL_DIR"
-    mkdir -p "$INSTALL_DIR"
-    cp -a "$src_dir/." "$INSTALL_DIR/"
-    rm -rf "$INSTALL_DIR/.git"
+clone_or_update_repo() {
+  progress 45 "baixando CheckUser do GitHub"
+  rm -rf "$SRC_DIR"
+  git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$SRC_DIR" >/dev/null 2>&1 || {
+    echo -e "\n${RED}Erro ao clonar: $REPO_URL${NC}"
+    exit 1
+  }
+
+  if [[ ! -f "$SRC_DIR/go.mod" || ! -d "$SRC_DIR/src" ]]; then
+    echo -e "\n${RED}Repositório inválido: go.mod ou pasta src não encontrada.${NC}"
+    exit 1
   fi
 }
 
 write_env() {
-  mkdir -p "$ENV_DIR" /etc/tg-access-bot
+  progress 60 "criando configuração"
+  mkdir -p "$ENV_DIR" /etc/tg-access-bot /root
   [[ -f /etc/tg-access-bot/users.jsonl ]] || touch /etc/tg-access-bot/users.jsonl
   [[ -f /etc/tg-access-bot/resellers.json ]] || echo '{}' > /etc/tg-access-bot/resellers.json
+  [[ -f /root/usuarios.db ]] || touch /root/usuarios.db
 
   if [[ ! -f "$ENV_FILE" ]]; then
     cat > "$ENV_FILE" <<'EOS'
@@ -142,14 +156,15 @@ EOS
 }
 
 build_binary() {
-  echo -e "${BLUE}==>${NC} Compilando CheckUser..."
-  cd "$INSTALL_DIR"
-  gofmt -w src/data/dao/user_dao.go src/domain/usecase/user/checkuser.go src/infra/handler/user/checkuser.go src/infra/http/route/user.go src/infra/http/echo.go src/data/repository/sqlite_device_repository.go
+  progress 75 "compilando CheckUser"
+  cd "$SRC_DIR"
+  go mod download >/dev/null 2>&1 || true
   go build -ldflags="-w -s" -o "$BIN_PATH" ./src
   chmod +x "$BIN_PATH"
 }
 
-write_service() {
+write_service_and_menu() {
+  progress 88 "criando serviço"
   cat > "$STARTER_PATH" <<'EOS'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -160,7 +175,7 @@ EOS
 
   cat > "$SERVICE_FILE" <<'EOS'
 [Unit]
-Description=CheckUser Go - Primecel DragonCore
+Description=CheckUser Go - Primecel
 After=network.target
 
 [Service]
@@ -175,33 +190,40 @@ RestartSec=3
 WantedBy=multi-user.target
 EOS
 
-  cat > "$MENU_PATH" <<EOF_MENU
+  cat > "$MENU_PATH" <<'EOS'
 #!/usr/bin/env bash
-sudo bash "$INSTALL_DIR/install.sh"
-EOF_MENU
+sudo bash /opt/checkuser-installer/install.sh
+EOS
   chmod +x "$MENU_PATH"
 
+  mkdir -p /opt/checkuser-installer
+  cp -f "$(readlink -f "$0")" /opt/checkuser-installer/install.sh
+  chmod +x /opt/checkuser-installer/install.sh
+
   systemctl daemon-reload
-  systemctl enable checkuser >/dev/null 2>&1 || true
+  systemctl enable checkuser >/dev/null 2>&1
   systemctl restart checkuser
+  progress 100 "finalizado"
 }
 
 install_checkuser() {
   require_root
-  ensure_deps
-  ensure_go
-  copy_sources
-  write_env
-  build_binary
-  write_service
+  mkdir -p "$LOG_DIR"
+  {
+    echo "Instalação iniciada em $(date)"
+    ensure_deps
+    ensure_go
+    clone_or_update_repo
+    write_env
+    build_binary
+    write_service_and_menu
+  } 2>&1 | tee -a "$LOG_DIR/install.log"
 
   echo ""
   echo -e "${GREEN}✅ CheckUser instalado/atualizado com sucesso.${NC}"
   echo -e "Link original: ${CYAN}http://127.0.0.1:2052${NC}"
-  echo "Consulta pela raiz: http://127.0.0.1:2052?user=USUARIO"
-  echo "Consulta original por rota: http://127.0.0.1:2052/check/USUARIO"
-  echo "Consulta compatível: http://127.0.0.1:2052/check?user=USUARIO"
-  echo "Com deviceId: http://127.0.0.1:2052?user=USUARIO&deviceid=DEVICE_ID"
+  echo "Consulta: http://127.0.0.1:2052?user=USUARIO"
+  echo "Consulta UUID: http://127.0.0.1:2052?user=UUID_DO_XRAY"
   echo "Menu: checkuser-menu"
   pause
 }
@@ -222,26 +244,36 @@ show_status() {
 }
 
 show_logs() {
-  journalctl -u checkuser -n 80 --no-pager || true
+  journalctl -u checkuser -n 100 --no-pager || true
+  pause
+}
+
+test_endpoint() {
+  echo ""
+  read -r -p "Digite usuário ou UUID para testar: " test_user
+  if [[ -z "$test_user" ]]; then
+    echo -e "${RED}Usuário vazio.${NC}"
+  else
+    curl -s "http://127.0.0.1:2052?user=${test_user}" || true
+    echo ""
+  fi
   pause
 }
 
 show_menu() {
   clear
   echo -e "${CYAN}╔══════════════════════════════════════╗${NC}"
-  echo -e "${CYAN}║${NC}        ${YELLOW}CHECKUSER PRIMECEL/DRAGONCORE${NC}      ${CYAN}║${NC}"
+  echo -e "${CYAN}║${NC} ${YELLOW}CHECKUSER PRIMECEL - DIRETO${NC}          ${CYAN}║${NC}"
   echo -e "${CYAN}╚══════════════════════════════════════╝${NC}"
-  if [[ -x "$BIN_PATH" ]]; then
-    echo -e "Status: ${GREEN}instalado${NC}"
-  else
-    echo -e "Status: ${RED}não instalado${NC}"
-  fi
+  echo "Repo: $REPO_URL"
+  echo "Porta: 2052"
   echo ""
   echo "1. Instalar/Atualizar CheckUser"
   echo "2. Reinstalar CheckUser"
   echo "3. Desinstalar CheckUser"
   echo "4. Status"
   echo "5. Logs"
+  echo "6. Testar endpoint"
   echo "0. Sair"
   echo ""
   echo -n "Escolha: "
@@ -257,6 +289,7 @@ main() {
       3|03) uninstall_checkuser ;;
       4|04) show_status ;;
       5|05) show_logs ;;
+      6|06) test_endpoint ;;
       0|00) exit 0 ;;
       *) echo -e "${RED}Opção inválida.${NC}"; sleep 1 ;;
     esac

@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/DTunnel0/CheckUser-Go/src/data/repository"
-	"github.com/DTunnel0/CheckUser-Go/src/infra/factory"
-	"github.com/DTunnel0/CheckUser-Go/src/infra/http"
+	"github.com/yzeusy/checkuser/src/data/repository"
+	"github.com/yzeusy/checkuser/src/infra/factory"
+	"github.com/yzeusy/checkuser/src/infra/http"
 )
 
 var (

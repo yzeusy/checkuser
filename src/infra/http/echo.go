@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/DTunnel0/CheckUser-Go/src/infra/adapter"
-	"github.com/DTunnel0/CheckUser-Go/src/infra/factory"
-	"github.com/DTunnel0/CheckUser-Go/src/infra/http/route"
+	"github.com/yzeusy/checkuser/src/infra/adapter"
+	"github.com/yzeusy/checkuser/src/infra/factory"
+	"github.com/yzeusy/checkuser/src/infra/http/route"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"golang.org/x/crypto/acme"

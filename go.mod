@@ -1,4 +1,4 @@
-module github.com/DTunnel0/CheckUser-Go
+module github.com/yzeusy/checkuser
 
 go 1.21.6
 

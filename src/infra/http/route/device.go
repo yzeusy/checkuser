@@ -1,8 +1,8 @@
 package route
 
 import (
-	"github.com/DTunnel0/CheckUser-Go/src/infra/adapter"
-	"github.com/DTunnel0/CheckUser-Go/src/infra/factory"
+	"github.com/yzeusy/checkuser/src/infra/adapter"
+	"github.com/yzeusy/checkuser/src/infra/factory"
 	"github.com/labstack/echo/v4"
 )
 

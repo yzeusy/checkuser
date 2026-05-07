@@ -3,8 +3,8 @@ package repository
 import (
 	"context"
 
-	"github.com/DTunnel0/CheckUser-Go/src/domain/contract"
-	"github.com/DTunnel0/CheckUser-Go/src/domain/entity"
+	"github.com/yzeusy/checkuser/src/domain/contract"
+	"github.com/yzeusy/checkuser/src/domain/entity"
 )
 
 type systemUserRepository struct {

@@ -3,8 +3,8 @@ package device_handler
 import (
 	"context"
 
-	device_use_case "github.com/DTunnel0/CheckUser-Go/src/domain/usecase/device"
-	"github.com/DTunnel0/CheckUser-Go/src/infra/handler"
+	device_use_case "github.com/yzeusy/checkuser/src/domain/usecase/device"
+	"github.com/yzeusy/checkuser/src/infra/handler"
 )
 
 type countDevicesHandler struct {
