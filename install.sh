@@ -192,13 +192,83 @@ EOS
 
   cat > "$MENU_PATH" <<'EOS'
 #!/usr/bin/env bash
-sudo bash /opt/checkuser-installer/install.sh
+set -euo pipefail
+
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[1;36m'
+NC='\033[0m'
+
+pause() {
+  echo ""
+  read -r -p "Pressione ENTER para continuar..." _ || true
+}
+
+while true; do
+  clear
+  echo -e "${CYAN}╔══════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║${NC} ${YELLOW}CHECKUSER PRIMECEL${NC}                   ${CYAN}║${NC}"
+  echo -e "${CYAN}╚══════════════════════════════════════╝${NC}"
+  echo "1. Status"
+  echo "2. Logs"
+  echo "3. Reiniciar serviço"
+  echo "4. Testar endpoint"
+  echo "5. Editar configuração"
+  echo "6. Reinstalar/Atualizar"
+  echo "0. Sair"
+  echo ""
+  read -r -p "Escolha: " opt
+  case "$opt" in
+    1|01) systemctl status checkuser --no-pager || true; pause ;;
+    2|02) journalctl -u checkuser -n 100 --no-pager || true; pause ;;
+    3|03) systemctl restart checkuser; echo -e "${GREEN}Serviço reiniciado.${NC}"; pause ;;
+    4|04)
+      read -r -p "Digite usuário ou UUID: " user
+      if [[ -n "$user" ]]; then
+        curl -s "http://127.0.0.1:2052?user=${user}" || true
+        echo ""
+      else
+        echo -e "${RED}Usuário vazio.${NC}"
+      fi
+      pause
+      ;;
+    5|05) ${EDITOR:-nano} /etc/checkuser/checkuser.env; systemctl restart checkuser || true; pause ;;
+    6|06)
+      if [[ -x /opt/checkuser-installer/install.sh ]]; then
+        sudo bash /opt/checkuser-installer/install.sh
+      else
+        echo -e "${RED}Instalador local não encontrado em /opt/checkuser-installer/install.sh.${NC}"
+        echo "Baixe novamente o instalador e execute: sudo bash install.sh"
+        pause
+      fi
+      ;;
+    0|00) exit 0 ;;
+    *) echo -e "${RED}Opção inválida.${NC}"; sleep 1 ;;
+  esac
+done
 EOS
   chmod +x "$MENU_PATH"
 
   mkdir -p /opt/checkuser-installer
-  cp -f "$(readlink -f "$0")" /opt/checkuser-installer/install.sh
-  chmod +x /opt/checkuser-installer/install.sh
+  local self_path=""
+  if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
+    self_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+  elif [[ -f "$0" ]]; then
+    self_path="$0"
+  fi
+
+  if [[ -n "$self_path" && -f "$self_path" ]]; then
+    cp -f "$self_path" /opt/checkuser-installer/install.sh
+    chmod +x /opt/checkuser-installer/install.sh
+  else
+    cat > /opt/checkuser-installer/install.sh <<'EOS'
+#!/usr/bin/env bash
+echo "Instalador original não foi copiado porque foi executado via pipe/process substitution."
+echo "Baixe novamente o pacote e execute: sudo bash install.sh"
+EOS
+    chmod +x /opt/checkuser-installer/install.sh
+  fi
 
   systemctl daemon-reload
   systemctl enable checkuser >/dev/null 2>&1
