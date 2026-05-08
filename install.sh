@@ -492,7 +492,7 @@ configure_cloudflare_menu() {
   echo -e "${YELLOW}Configure na Cloudflare:${NC}"
   echo "1. DNS → A → ${domain} → ${ip:-IP_PUBLICO_DA_VPS} → Proxy ativado"
   echo "2. Rules → Origin Rules → Create rule"
-  echo "   Expressão: http.host wildcard r"${domain}""
+  echo "   Expressão: http.host eq "${domain}""
   echo "   Destination Port: Rewrite to 2052"
   echo "3. Link do app: ${cf_url}/?user=USUARIO"
   echo "4. UUID: ${cf_url}/?user=UUID_DO_XRAY"
@@ -721,10 +721,10 @@ cf_create_or_update_origin_rule() {
     .result.rules as $rules |
     {
       rules: (
-        ($rules // [] | map(select((.ref // "") != $ref and (.description // "") != ("CheckUser DTunnel - " + $fqdn) and (.expression // "") != ("http.host wildcard r\"" + $fqdn + "\""))))
+        ($rules // [] | map(select((.ref // "") != $ref and (.description // "") != ("CheckUser DTunnel - " + $fqdn) and (.expression // "") != ("http.host eq \"" + $fqdn + "\""))))
         + [{
           ref: $ref,
-          expression: ("http.host wildcard r\"" + $fqdn + "\""),
+          expression: ("http.host eq \"" + $fqdn + "\""),
           description: ("CheckUser DTunnel - " + $fqdn),
           action: "route",
           action_parameters: { origin: { port: 2052 } }
@@ -907,7 +907,14 @@ install_checkuser() {
     normalize_public_host_env
     build_binary
     write_service_and_menu
-  } 2>&1 | tee -a "$LOG_DIR/install.log"
+  }
+
+install_checkuser_with_cloudflare() {
+  install_checkuser
+  configure_cloudflare_auto
+}
+
+ 2>&1 | tee -a "$LOG_DIR/install.log"
 
   local public_ip public_host cloudflare_url
   public_ip="$(get_public_ip)"
@@ -1112,8 +1119,8 @@ configure_cloudflare() {
   echo "   Proxy: Ativado / nuvem laranja"
   echo ""
   echo "2. Rules → Origin Rules → Create rule"
-  echo "   Nome: CheckUser"
-  echo "   Expressão: http.host wildcard r\"${domain}\""
+  echo "   Nome: CheckUser DTunnel"
+  echo "   Expressão: http.host eq \"${domain}\""
   echo "   Destination Port: Rewrite to 2052"
   echo ""
   echo "3. Link para usar no app"
@@ -1261,11 +1268,11 @@ cf_create_or_update_origin_rule() {
     .result.rules as $rules |
     {
       rules: (
-        ($rules // [] | map(select((.ref // "") != $ref and (.description // "") != ("CheckUser DTunnel - " + $fqdn) and (.expression // "") != ("http.host wildcard r\"" + $fqdn + "\""))))
+        ($rules // [] | map(select((.ref // "") != $ref and (.description // "") != ("CheckUser DTunnel - " + $fqdn) and (.expression // "") != ("http.host eq \"" + $fqdn + "\""))))
         + [{
           ref: $ref,
-          expression: ("http.host wildcard r\"" + $fqdn + "\""),
-          description: ("CheckUser - " + $fqdn),
+          expression: ("http.host eq \"" + $fqdn + "\""),
+          description: ("CheckUser DTunnel - " + $fqdn),
           action: "route",
           action_parameters: { origin: { port: 2052 } }
         }]
