@@ -932,7 +932,7 @@ install_checkuser_with_cloudflare() {
 
   echo ""
   echo -e "${GREEN}✅ CheckUser instalado/atualizado com sucesso.${NC}"
-  echo -e "Local: ${CYAN}http://127.0.0.1:2052${NC}"
+  echo ""
   if [[ -n "$cloudflare_url" ]]; then
     echo -e "Cloudflare: ${CYAN}${cloudflare_url}${NC}"
     echo "Consulta: ${cloudflare_url}?user=USUARIO"
@@ -945,11 +945,6 @@ install_checkuser_with_cloudflare() {
     echo -e "${YELLOW}IP público não detectado automaticamente.${NC}"
     echo "Consulta pública: http://IP_DA_VPS:2052?user=USUARIO"
   fi
-  echo "Menu: checkuser-menu"
-  echo ""
-  echo -e "${YELLOW}Observação:${NC} se a VPS estiver em AWS/Oracle/Google/Hostinger, libere a porta 2052 no firewall/security group da nuvem."
-  pause
-}
 
 uninstall_checkuser() {
   require_root
@@ -1119,7 +1114,7 @@ configure_cloudflare() {
   echo "   Proxy: Ativado / nuvem laranja"
   echo ""
   echo "2. Rules → Origin Rules → Create rule"
-  echo "   Nome: CheckUser DTunnel"
+  echo "   Nome: CheckUser"
   echo "   Expressão: http.host eq \"${domain}\""
   echo "   Destination Port: Rewrite to 2052"
   echo ""
@@ -1407,7 +1402,6 @@ show_menu() {
   echo -e "${CYAN}║${NC} ${GREEN}3${NC}. Desinstalar CheckUser"
   echo -e "${CYAN}║${NC} ${GREEN}4${NC}. Limpar DeviceID"
   echo -e "${CYAN}║${NC} ${GREEN}5${NC}. Testar endpoint"
-  echo -e "${CYAN}║${NC} ${GREEN}6${NC}. Configurar Cloudflare automático"
   echo -e "${CYAN}║${NC} ${RED}0${NC}. Sair"
   echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
   echo ""
@@ -1419,12 +1413,11 @@ main() {
     show_menu
     read -r opt
     case "$opt" in
-      1|01) install_checkuser ;;
+      1|01) install_checkuser; configure_cloudflare ;;
       2|02) uninstall_checkuser; install_checkuser ;;
       3|03) uninstall_checkuser ;;
       4|04) clear_deviceid ;;
       5|05) test_endpoint ;;
-      6|06) configure_cloudflare ;;
       0|00) exit 0 ;;
       *) echo -e "${RED}Opção inválida.${NC}"; sleep 1 ;;
     esac
