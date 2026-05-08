@@ -674,21 +674,34 @@ cf_create_or_update_dns() {
   local zone_id="$2"
   local fqdn="$3"
   local ip="$4"
-  local response record_id body
+  local response records record_id body conflicting_ids
 
-  response="$(cf_api_request "$token" GET "/zones/${zone_id}/dns_records?type=A&name=${fqdn}")"
+  response="$(cf_api_request "$token" GET "/zones/${zone_id}/dns_records?name=${fqdn}&per_page=100")"
   cf_require_success "$response" "consultar DNS" || return 1
+
+  # Se já existir outro tipo no mesmo host, remove para conseguir aplicar o A corretamente.
+  conflicting_ids="$(printf '%s' "$response" | jq -r '.result[] | select(.type != "A") | .id' 2>/dev/null || true)"
+  if [[ -n "$conflicting_ids" ]]; then
+    while IFS= read -r old_id; do
+      [[ -z "$old_id" ]] && continue
+      response="$(cf_api_request "$token" DELETE "/zones/${zone_id}/dns_records/${old_id}")"
+      cf_require_success "$response" "remover DNS conflitante" || return 1
+    done <<< "$conflicting_ids"
+  fi
+
+  response="$(cf_api_request "$token" GET "/zones/${zone_id}/dns_records?type=A&name=${fqdn}&per_page=100")"
+  cf_require_success "$response" "consultar DNS A" || return 1
   record_id="$(printf '%s' "$response" | jq -r '.result[0].id // empty')"
 
   body="$(jq -n --arg name "$fqdn" --arg content "$ip" '{type:"A", name:$name, content:$content, ttl:1, proxied:true}')"
   if [[ -n "$record_id" ]]; then
     response="$(cf_api_request "$token" PUT "/zones/${zone_id}/dns_records/${record_id}" "$body")"
     cf_require_success "$response" "atualizar DNS" || return 1
-    echo -e "${GREEN}DNS atualizado:${NC} ${fqdn} → ${ip} / proxy ativo"
+    echo -e "${GREEN}DNS atualizado:${NC} Host ${fqdn} → ${ip} / proxy ativo"
   else
     response="$(cf_api_request "$token" POST "/zones/${zone_id}/dns_records" "$body")"
     cf_require_success "$response" "criar DNS" || return 1
-    echo -e "${GREEN}DNS criado:${NC} ${fqdn} → ${ip} / proxy ativo"
+    echo -e "${GREEN}DNS criado:${NC} Host ${fqdn} → ${ip} / proxy ativo"
   fi
 }
 
@@ -700,7 +713,7 @@ cf_create_or_update_origin_rule() {
 
   rulesets="$(cf_api_request "$token" GET "/zones/${zone_id}/rulesets")"
   cf_require_success "$rulesets" "listar regras de origem" || return 1
-  ruleset_id="$(printf '%s' "$rulesets" | jq -r '.result[] | select(.phase=="http_request_origin" and .kind=="zone") | .id' | head -n1)"
+  ruleset_id="$(printf '%s' "$rulesets" | jq -r 'first(.result[] | select(.phase=="http_request_origin" and .kind=="zone") | .id) // empty')"
 
   if [[ -z "$ruleset_id" ]]; then
     body='{"name":"CheckUser DTunnel Origin Rules","kind":"zone","phase":"http_request_origin","rules":[]}'
@@ -713,6 +726,8 @@ cf_create_or_update_origin_rule() {
   cf_require_success "$full" "ler ruleset de origem" || return 1
   ref="checkuser_dtunnel_$(printf '%s' "$fqdn" | sed 's/[^A-Za-z0-9_]/_/g')"
 
+  # Mantém as regras existentes, substitui somente a regra gerenciada deste host,
+  # e força o destino da Cloudflare para a porta 2052 do CheckUser.
   body="$(printf '%s' "$full" | jq --arg fqdn "$fqdn" --arg ref "$ref" '
     .result.rules as $rules |
     {
@@ -720,6 +735,7 @@ cf_create_or_update_origin_rule() {
         ($rules // [] | map(select((.ref // "") != $ref and (.description // "") != ("CheckUser DTunnel - " + $fqdn) and (.expression // "") != ("http.host eq \"" + $fqdn + "\""))))
         + [{
           ref: $ref,
+          enabled: true,
           expression: ("http.host eq \"" + $fqdn + "\""),
           description: ("CheckUser DTunnel - " + $fqdn),
           action: "route",
@@ -731,7 +747,7 @@ cf_create_or_update_origin_rule() {
 
   response="$(cf_api_request "$token" PUT "/zones/${zone_id}/rulesets/${ruleset_id}" "$body")"
   cf_require_success "$response" "criar/atualizar Origin Rule" || return 1
-  echo -e "${GREEN}Origin Rule criada/atualizada:${NC} ${fqdn} → porta 2052"
+  echo -e "${GREEN}Origin Rule criada/atualizada:${NC} Host ${fqdn} → porta 2052"
 }
 
 configure_cloudflare_menu() {
@@ -740,7 +756,7 @@ configure_cloudflare_menu() {
   echo -e "${CYAN}║${NC}        ${YELLOW}CLOUDFLARE AUTOMÁTICO${NC}                ${CYAN}║${NC}"
   echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
   echo ""
-  echo "Permissões necessárias no token: Zone Read, DNS Edit e Rulesets/Origin Write."
+  echo "Permissões necessárias no token: Zone Read, DNS Edit e Origin Rules/Rulesets Write."
   echo ""
 
   if ! command -v jq >/dev/null 2>&1; then
@@ -811,6 +827,8 @@ configure_cloudflare_menu() {
   set_env_key CHECKUSER_CLOUDFLARE_DOMAIN "$fqdn"
   set_env_key CHECKUSER_CLOUDFLARE_URL "$cf_url"
   set_env_key CHECKUSER_PUBLIC_HOST "$fqdn"
+  set_env_key CHECKUSER_CLOUDFLARE_ZONE_ID "$zone_id"
+  set_env_key CHECKUSER_CLOUDFLARE_ZONE_NAME "$zone_name"
 
   echo ""
   echo -e "${GREEN}✅ Cloudflare configurado com sucesso.${NC}"
@@ -837,6 +855,7 @@ while true; do
   echo -e "${CYAN}║${NC} ${GREEN}4${NC}. Editar configuração"
   echo -e "${CYAN}║${NC} ${GREEN}5${NC}. Reinstalar/Atualizar"
   echo -e "${CYAN}║${NC} ${GREEN}6${NC}. Configurar Cloudflare automático"
+  echo -e "${CYAN}║${NC} ${GREEN}7${NC}. Instalar/Atualizar + Cloudflare automático"
   echo -e "${CYAN}║${NC} ${RED}0${NC}. Sair"
   echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
   echo ""
@@ -856,6 +875,15 @@ while true; do
       fi
       ;;
     6|06) configure_cloudflare_menu ;;
+    7|07)
+      if [[ -x /opt/checkuser-installer/install.sh ]]; then
+        sudo bash /opt/checkuser-installer/install.sh --install-cloudflare
+      else
+        echo -e "${RED}Instalador local não encontrado em /opt/checkuser-installer/install.sh.${NC}"
+        echo "Baixe novamente o instalador e execute: sudo bash install.sh"
+        pause
+      fi
+      ;;
     0|00) exit 0 ;;
     *) echo -e "${RED}Opção inválida.${NC}"; sleep 1 ;;
   esac
@@ -1210,21 +1238,34 @@ cf_create_or_update_dns() {
   local zone_id="$2"
   local fqdn="$3"
   local ip="$4"
-  local response record_id body
+  local response records record_id body conflicting_ids
 
-  response="$(cf_api_request "$token" GET "/zones/${zone_id}/dns_records?type=A&name=${fqdn}")"
+  response="$(cf_api_request "$token" GET "/zones/${zone_id}/dns_records?name=${fqdn}&per_page=100")"
   cf_require_success "$response" "consultar DNS" || return 1
+
+  # Se já existir outro tipo no mesmo host, remove para conseguir aplicar o A corretamente.
+  conflicting_ids="$(printf '%s' "$response" | jq -r '.result[] | select(.type != "A") | .id' 2>/dev/null || true)"
+  if [[ -n "$conflicting_ids" ]]; then
+    while IFS= read -r old_id; do
+      [[ -z "$old_id" ]] && continue
+      response="$(cf_api_request "$token" DELETE "/zones/${zone_id}/dns_records/${old_id}")"
+      cf_require_success "$response" "remover DNS conflitante" || return 1
+    done <<< "$conflicting_ids"
+  fi
+
+  response="$(cf_api_request "$token" GET "/zones/${zone_id}/dns_records?type=A&name=${fqdn}&per_page=100")"
+  cf_require_success "$response" "consultar DNS A" || return 1
   record_id="$(printf '%s' "$response" | jq -r '.result[0].id // empty')"
 
   body="$(jq -n --arg name "$fqdn" --arg content "$ip" '{type:"A", name:$name, content:$content, ttl:1, proxied:true}')"
   if [[ -n "$record_id" ]]; then
     response="$(cf_api_request "$token" PUT "/zones/${zone_id}/dns_records/${record_id}" "$body")"
     cf_require_success "$response" "atualizar DNS" || return 1
-    echo -e "${GREEN}DNS atualizado:${NC} ${fqdn} → ${ip} / proxy ativo"
+    echo -e "${GREEN}DNS atualizado:${NC} Host ${fqdn} → ${ip} / proxy ativo"
   else
     response="$(cf_api_request "$token" POST "/zones/${zone_id}/dns_records" "$body")"
     cf_require_success "$response" "criar DNS" || return 1
-    echo -e "${GREEN}DNS criado:${NC} ${fqdn} → ${ip} / proxy ativo"
+    echo -e "${GREEN}DNS criado:${NC} Host ${fqdn} → ${ip} / proxy ativo"
   fi
 }
 
@@ -1236,7 +1277,7 @@ cf_create_or_update_origin_rule() {
 
   rulesets="$(cf_api_request "$token" GET "/zones/${zone_id}/rulesets")"
   cf_require_success "$rulesets" "listar regras de origem" || return 1
-  ruleset_id="$(printf '%s' "$rulesets" | jq -r '.result[] | select(.phase=="http_request_origin" and .kind=="zone") | .id' | head -n1)"
+  ruleset_id="$(printf '%s' "$rulesets" | jq -r 'first(.result[] | select(.phase=="http_request_origin" and .kind=="zone") | .id) // empty')"
 
   if [[ -z "$ruleset_id" ]]; then
     body='{"name":"CheckUser DTunnel Origin Rules","kind":"zone","phase":"http_request_origin","rules":[]}'
@@ -1249,6 +1290,8 @@ cf_create_or_update_origin_rule() {
   cf_require_success "$full" "ler ruleset de origem" || return 1
   ref="checkuser_dtunnel_$(printf '%s' "$fqdn" | sed 's/[^A-Za-z0-9_]/_/g')"
 
+  # Mantém as regras existentes, substitui somente a regra gerenciada deste host,
+  # e força o destino da Cloudflare para a porta 2052 do CheckUser.
   body="$(printf '%s' "$full" | jq --arg fqdn "$fqdn" --arg ref "$ref" '
     .result.rules as $rules |
     {
@@ -1256,6 +1299,7 @@ cf_create_or_update_origin_rule() {
         ($rules // [] | map(select((.ref // "") != $ref and (.description // "") != ("CheckUser DTunnel - " + $fqdn) and (.expression // "") != ("http.host eq \"" + $fqdn + "\""))))
         + [{
           ref: $ref,
+          enabled: true,
           expression: ("http.host eq \"" + $fqdn + "\""),
           description: ("CheckUser DTunnel - " + $fqdn),
           action: "route",
@@ -1267,7 +1311,7 @@ cf_create_or_update_origin_rule() {
 
   response="$(cf_api_request "$token" PUT "/zones/${zone_id}/rulesets/${ruleset_id}" "$body")"
   cf_require_success "$response" "criar/atualizar Origin Rule" || return 1
-  echo -e "${GREEN}Origin Rule criada/atualizada:${NC} ${fqdn} → porta 2052"
+  echo -e "${GREEN}Origin Rule criada/atualizada:${NC} Host ${fqdn} → porta 2052"
 }
 
 configure_cloudflare() {
@@ -1277,7 +1321,7 @@ configure_cloudflare() {
   echo -e "${CYAN}║${NC}        ${YELLOW}CLOUDFLARE AUTOMÁTICO${NC}                ${CYAN}║${NC}"
   echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
   echo ""
-  echo "Permissões necessárias no token: Zone Read, DNS Edit e Rulesets/Origin Write."
+  echo "Permissões necessárias no token: Zone Read, DNS Edit e Origin Rules/Rulesets Write."
   echo ""
 
   if ! command -v jq >/dev/null 2>&1; then
@@ -1348,6 +1392,8 @@ configure_cloudflare() {
   set_env_key CHECKUSER_CLOUDFLARE_DOMAIN "$fqdn"
   set_env_key CHECKUSER_CLOUDFLARE_URL "$cf_url"
   set_env_key CHECKUSER_PUBLIC_HOST "$fqdn"
+  set_env_key CHECKUSER_CLOUDFLARE_ZONE_ID "$zone_id"
+  set_env_key CHECKUSER_CLOUDFLARE_ZONE_NAME "$zone_name"
 
   echo ""
   echo -e "${GREEN}✅ Cloudflare configurado com sucesso.${NC}"
@@ -1393,6 +1439,7 @@ show_menu() {
   echo -e "${CYAN}║${NC} ${GREEN}4${NC}. Limpar DeviceID"
   echo -e "${CYAN}║${NC} ${GREEN}5${NC}. Testar endpoint"
   echo -e "${CYAN}║${NC} ${GREEN}6${NC}. Configurar Cloudflare automático"
+  echo -e "${CYAN}║${NC} ${GREEN}7${NC}. Instalar/Atualizar + Cloudflare automático"
   echo -e "${CYAN}║${NC} ${RED}0${NC}. Sair"
   echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
   echo ""
@@ -1410,10 +1457,27 @@ main() {
       4|04) clear_deviceid ;;
       5|05) test_endpoint ;;
       6|06) configure_cloudflare ;;
+      7|07) install_checkuser; configure_cloudflare ;;
       0|00) exit 0 ;;
       *) echo -e "${RED}Opção inválida.${NC}"; sleep 1 ;;
     esac
   done
 }
+
+case "${1:-}" in
+  --install-only)
+    install_checkuser
+    exit 0
+    ;;
+  --cloudflare)
+    configure_cloudflare
+    exit 0
+    ;;
+  --install-cloudflare)
+    install_checkuser
+    configure_cloudflare
+    exit 0
+    ;;
+esac
 
 main "$@"
