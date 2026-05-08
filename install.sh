@@ -1284,7 +1284,7 @@ configure_cloudflare() {
   require_root
   clear
   echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
-  echo -e "${CYAN}║${NC}         ${YELLOW}CLOUDFLARE AUTOMÁTICO${NC}                ${CYAN}║${NC}"
+  echo -e "${CYAN}║${NC}         ${YELLOW}CHECKUSER DTUNNEL${NC}                ${CYAN}║${NC}"
   echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
   echo ""
   if ! command -v jq >/dev/null 2>&1; then
@@ -1303,7 +1303,11 @@ configure_cloudflare() {
     pause
     return
   fi
-
+  clear
+  echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║${NC}         ${YELLOW}CHECKUSER DTUNNEL${NC}                ${CYAN}║${NC}"
+  echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
+  echo ""
   echo -e "${CYAN}Domínios encontrados:${NC}"
   printf '%s' "$zones" | jq -r '.result | to_entries[] | "\(.key + 1). \(.value.name)"'
   echo ""
@@ -1317,11 +1321,16 @@ configure_cloudflare() {
   idx=$((choice - 1))
   zone_id="$(printf '%s' "$zones" | jq -r ".result[$idx].id")"
   zone_name="$(printf '%s' "$zones" | jq -r ".result[$idx].name")"
-
+  clear
+  echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║${NC}         ${YELLOW}CHECKUSER DTUNNEL${NC}                ${CYAN}║${NC}"
+  echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
   echo ""
   echo "Digite o subdomínio. Exemplos: check, api, vpn"
+  echo ""
   read -r -p "Subdomínio: " sub
   fqdn="$(build_cf_hostname "$zone_name" "$sub")" || {
+    echo ""
     echo -e "${RED}Subdomínio inválido para a zona ${zone_name}.${NC}"
     pause
     return
@@ -1332,13 +1341,16 @@ configure_cloudflare() {
     pause
     return
   fi
-
+  clear
+  echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║${NC}         ${YELLOW}CHECKUSER DTUNNEL${NC}                ${CYAN}║${NC}"
+  echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
+  echo ""
   ip="$(get_public_ip)"
   if [[ -z "$ip" ]]; then
     read -r -p "IP da VPS: " ip
   else
-    read -r -p "IP detectado (${ip}). Pressione ENTER para continuar ou digite outro: " response
-    [[ -n "$response" ]] && ip="$response"
+    read -r -p "IP detectado (${ip}). Pressione ENTER para continuar"
   fi
 
   if [[ -z "$ip" ]]; then
@@ -1354,7 +1366,10 @@ configure_cloudflare() {
   set_env_key CHECKUSER_CLOUDFLARE_DOMAIN "$fqdn"
   set_env_key CHECKUSER_CLOUDFLARE_URL "$cf_url"
   set_env_key CHECKUSER_PUBLIC_HOST "$fqdn"
-
+  clear
+  echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║${NC}         ${YELLOW}CHECKUSER DTUNNEL${NC}                ${CYAN}║${NC}"
+  echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
   echo ""
   echo -e "${GREEN}✅ Instalado com sucesso.${NC}"
   echo ""
