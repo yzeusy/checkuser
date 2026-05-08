@@ -945,7 +945,7 @@ install_checkuser_with_cloudflare() {
     echo -e "${YELLOW}IP público não detectado automaticamente.${NC}"
     echo "Consulta pública: http://IP_DA_VPS:2052?user=USUARIO"
   fi
-
+}
 uninstall_checkuser() {
   require_root
   systemctl stop checkuser >/dev/null 2>&1 || true
