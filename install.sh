@@ -1284,12 +1284,9 @@ configure_cloudflare() {
   require_root
   clear
   echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
-  echo -e "${CYAN}║${NC}        ${YELLOW}CLOUDFLARE AUTOMÁTICO${NC}                ${CYAN}║${NC}"
+  echo -e "${CYAN}║${NC}         ${YELLOW}CLOUDFLARE AUTOMÁTICO${NC}                ${CYAN}║${NC}"
   echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
   echo ""
-  echo "Permissões necessárias no token: Zone Read, DNS Edit e Rulesets/Origin Write."
-  echo ""
-
   if ! command -v jq >/dev/null 2>&1; then
     echo -e "${YELLOW}Instalando jq...${NC}"
     apt-get update -y >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y jq >/dev/null
@@ -1310,7 +1307,7 @@ configure_cloudflare() {
   echo -e "${CYAN}Domínios encontrados:${NC}"
   printf '%s' "$zones" | jq -r '.result | to_entries[] | "\(.key + 1). \(.value.name)"'
   echo ""
-  read -r -p "Escolha o domínio: " choice
+  read -r -p "Escolha: " choice
   if ! [[ "$choice" =~ ^[0-9]+$ ]] || [[ "$choice" -lt 1 || "$choice" -gt "$count" ]]; then
     echo -e "${RED}Opção inválida.${NC}"
     pause
@@ -1323,7 +1320,6 @@ configure_cloudflare() {
 
   echo ""
   echo "Digite o subdomínio. Exemplos: check, api, vpn"
-  echo "Deixe vazio ou use @ para usar o domínio raiz: ${zone_name}"
   read -r -p "Subdomínio: " sub
   fqdn="$(build_cf_hostname "$zone_name" "$sub")" || {
     echo -e "${RED}Subdomínio inválido para a zona ${zone_name}.${NC}"
@@ -1339,14 +1335,14 @@ configure_cloudflare() {
 
   ip="$(get_public_ip)"
   if [[ -z "$ip" ]]; then
-    read -r -p "IP público da VPS: " ip
+    read -r -p "IP da VPS: " ip
   else
-    read -r -p "IP público detectado (${ip}). Pressione ENTER para usar ou digite outro: " response
+    read -r -p "IP detectado (${ip}). Pressione ENTER para continuar ou digite outro: " response
     [[ -n "$response" ]] && ip="$response"
   fi
 
   if [[ -z "$ip" ]]; then
-    echo -e "${RED}IP público vazio.${NC}"
+    echo -e "${RED}IP vazio.${NC}"
     pause
     return
   fi
@@ -1360,12 +1356,10 @@ configure_cloudflare() {
   set_env_key CHECKUSER_PUBLIC_HOST "$fqdn"
 
   echo ""
-  echo -e "${GREEN}✅ Cloudflare configurado com sucesso.${NC}"
-  echo "Link do app: ${cf_url}/?user="
-  echo "Teste: ${cf_url}/?user=USUARIO"
-  echo "UUID:  ${cf_url}/?user=UUID_DO_XRAY"
+  echo -e "${GREEN}✅ Instalado com sucesso.${NC}"
   echo ""
-  echo -e "${YELLOW}Observação:${NC} se usar HTTPS no domínio e o CheckUser estiver em HTTP puro, confira o modo SSL da Cloudflare ou use proxy local/Nginx."
+  echo "Link: ${cf_url}"
+  echo "Teste: ${cf_url}/?user=USUARIO"
   pause
 }
 
@@ -1393,15 +1387,14 @@ show_menu() {
 
   clear
   echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
-  echo -e "${CYAN}║${NC}        ${YELLOW}CHECKUSER DTUNNEL${NC}                    ${CYAN}║${NC}"
+  echo -e "${CYAN}║${NC}        ${YELLOW}CHECKUSER DTUNNEL${NC}"
   echo -e "${CYAN}╠══════════════════════════════════════════════╣${NC}"
   echo -e "${CYAN}║${NC} Status: ${installed}"
   echo -e "${CYAN}╠══════════════════════════════════════════════╣${NC}"
-  echo -e "${CYAN}║${NC} ${GREEN}1${NC}. Instalar/Atualizar CheckUser"
-  echo -e "${CYAN}║${NC} ${GREEN}2${NC}. Reinstalar CheckUser"
-  echo -e "${CYAN}║${NC} ${GREEN}3${NC}. Desinstalar CheckUser"
-  echo -e "${CYAN}║${NC} ${GREEN}4${NC}. Limpar DeviceID"
-  echo -e "${CYAN}║${NC} ${GREEN}5${NC}. Testar endpoint"
+  echo -e "${CYAN}║${NC} ${GREEN}1${NC}. Instalar/Atualizar"
+  echo -e "${CYAN}║${NC} ${GREEN}2${NC}. Desinstalar"
+  echo -e "${CYAN}║${NC} ${GREEN}3${NC}. Limpar DeviceID"
+  echo -e "${CYAN}║${NC} ${GREEN}4${NC}. Testar endpoint"
   echo -e "${CYAN}║${NC} ${RED}0${NC}. Sair"
   echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
   echo ""
@@ -1414,10 +1407,9 @@ main() {
     read -r opt
     case "$opt" in
       1|01) install_checkuser; configure_cloudflare ;;
-      2|02) uninstall_checkuser; install_checkuser ;;
-      3|03) uninstall_checkuser ;;
-      4|04) clear_deviceid ;;
-      5|05) test_endpoint ;;
+      2|02) uninstall_checkuser ;;
+      3|03) clear_deviceid ;;
+      4|04) test_endpoint ;;
       0|00) exit 0 ;;
       *) echo -e "${RED}Opção inválida.${NC}"; sleep 1 ;;
     esac
