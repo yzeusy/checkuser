@@ -594,12 +594,12 @@ cf_api_request() {
   local url="https://api.cloudflare.com/client/v4${endpoint}"
 
   if [[ -n "$data" ]]; then
-    curl -sS -X "$method" "$url" \
+    curl --http1.1 -sS -X "$method" "$url" \
       -H "Authorization: Bearer ${token}" \
       -H "Content-Type: application/json" \
       --data "$data"
   else
-    curl -sS -X "$method" "$url" \
+    curl --http1.1 -sS -X "$method" "$url" \
       -H "Authorization: Bearer ${token}" \
       -H "Content-Type: application/json"
   fi
@@ -630,6 +630,8 @@ read_cf_token() {
     if [[ -z "$use_saved" || "$use_saved" =~ ^[Ss]$ ]]; then
       printf '%s' "$saved"
       return 0
+    else
+      sed -i '/^CHECKUSER_CLOUDFLARE_API_TOKEN=/d' "$ENV_FILE" 2>/dev/null || true
     fi
   fi
 
@@ -1149,12 +1151,12 @@ cf_api_request() {
   local url="https://api.cloudflare.com/client/v4${endpoint}"
 
   if [[ -n "$data" ]]; then
-    curl -sS -X "$method" "$url" \
+    curl --http1.1 -sS -X "$method" "$url" \
       -H "Authorization: Bearer ${token}" \
       -H "Content-Type: application/json" \
       --data "$data"
   else
-    curl -sS -X "$method" "$url" \
+    curl --http1.1 -sS -X "$method" "$url" \
       -H "Authorization: Bearer ${token}" \
       -H "Content-Type: application/json"
   fi
@@ -1185,6 +1187,8 @@ read_cf_token() {
     if [[ -z "$use_saved" || "$use_saved" =~ ^[Ss]$ ]]; then
       printf '%s' "$saved"
       return 0
+    else
+      sed -i '/^CHECKUSER_CLOUDFLARE_API_TOKEN=/d' "$ENV_FILE" 2>/dev/null || true
     fi
   fi
 
