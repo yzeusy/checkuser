@@ -628,7 +628,7 @@ read_cf_token() {
     read -r -p "Usar token Cloudflare salvo? [S/n]: " use_saved
     echo
     if [[ -z "$use_saved" || "$use_saved" =~ ^[Ss]$ ]]; then
-      printf '%s' "$saved"
+      printf '%s' "$(printf '%s' "$saved" | tr -d '\r\n')"
       return 0
     else
       sed -i '/^CHECKUSER_CLOUDFLARE_API_TOKEN=/d' "$ENV_FILE" 2>/dev/null || true
@@ -637,6 +637,7 @@ read_cf_token() {
 
   local token=""
   read -r -p "Token API Cloudflare: " token
+  token="$(printf '%s' "$token" | tr -d '\r\n')"
   echo ""
   if [[ -z "$token" ]]; then
     echo -e "${RED}Token vazio.${NC}" >&2
@@ -1185,7 +1186,7 @@ read_cf_token() {
     read -r -p "Usar token Cloudflare salvo? [S/n]: " use_saved
     echo
     if [[ -z "$use_saved" || "$use_saved" =~ ^[Ss]$ ]]; then
-      printf '%s' "$saved"
+      printf '%s' "$(printf '%s' "$saved" | tr -d '\r\n')"
       return 0
     else
       sed -i '/^CHECKUSER_CLOUDFLARE_API_TOKEN=/d' "$ENV_FILE" 2>/dev/null || true
@@ -1194,6 +1195,7 @@ read_cf_token() {
 
   local token=""
   read -r -p "Token API Cloudflare: " token
+  token="$(printf '%s' "$token" | tr -d '\r\n')"
   echo ""
   if [[ -z "$token" ]]; then
     echo -e "${RED}Token vazio.${NC}" >&2
