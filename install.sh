@@ -492,7 +492,7 @@ configure_cloudflare_menu() {
   echo -e "${YELLOW}Configure na Cloudflare:${NC}"
   echo "1. DNS → A → ${domain} → ${ip:-IP_PUBLICO_DA_VPS} → Proxy ativado"
   echo "2. Rules → Origin Rules → Create rule"
-  echo "   Expressão: http.host eq "${domain}""
+  echo "   Expressão: http.host wildcard r"${domain}""
   echo "   Destination Port: Rewrite to 2052"
   echo "3. Link do app: ${cf_url}/?user=USUARIO"
   echo "4. UUID: ${cf_url}/?user=UUID_DO_XRAY"
@@ -721,10 +721,10 @@ cf_create_or_update_origin_rule() {
     .result.rules as $rules |
     {
       rules: (
-        ($rules // [] | map(select((.ref // "") != $ref and (.description // "") != ("CheckUser DTunnel - " + $fqdn) and (.expression // "") != ("http.host eq \"" + $fqdn + "\""))))
+        ($rules // [] | map(select((.ref // "") != $ref and (.description // "") != ("CheckUser DTunnel - " + $fqdn) and (.expression // "") != ("http.host wildcard r\"" + $fqdn + "\""))))
         + [{
           ref: $ref,
-          expression: ("http.host eq \"" + $fqdn + "\""),
+          expression: ("http.host wildcard r\"" + $fqdn + "\""),
           description: ("CheckUser DTunnel - " + $fqdn),
           action: "route",
           action_parameters: { origin: { port: 2052 } }
@@ -1112,8 +1112,8 @@ configure_cloudflare() {
   echo "   Proxy: Ativado / nuvem laranja"
   echo ""
   echo "2. Rules → Origin Rules → Create rule"
-  echo "   Nome: CheckUser DTunnel"
-  echo "   Expressão: http.host eq \"${domain}\""
+  echo "   Nome: CheckUser"
+  echo "   Expressão: http.host wildcard r\"${domain}\""
   echo "   Destination Port: Rewrite to 2052"
   echo ""
   echo "3. Link para usar no app"
@@ -1261,11 +1261,11 @@ cf_create_or_update_origin_rule() {
     .result.rules as $rules |
     {
       rules: (
-        ($rules // [] | map(select((.ref // "") != $ref and (.description // "") != ("CheckUser DTunnel - " + $fqdn) and (.expression // "") != ("http.host eq \"" + $fqdn + "\""))))
+        ($rules // [] | map(select((.ref // "") != $ref and (.description // "") != ("CheckUser DTunnel - " + $fqdn) and (.expression // "") != ("http.host wildcard r\"" + $fqdn + "\""))))
         + [{
           ref: $ref,
-          expression: ("http.host eq \"" + $fqdn + "\""),
-          description: ("CheckUser DTunnel - " + $fqdn),
+          expression: ("http.host wildcard r\"" + $fqdn + "\""),
+          description: ("CheckUser - " + $fqdn),
           action: "route",
           action_parameters: { origin: { port: 2052 } }
         }]
