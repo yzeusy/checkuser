@@ -3,7 +3,7 @@ package device_use_case
 import (
 	"context"
 
-	"github.com/yzeusy/checkuser/src/domain/contract"
+	"github.com/zeusxprime/checkuser/src/domain/contract"
 )
 
 type ListDevicesByUsernameUseCase struct {

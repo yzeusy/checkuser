@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/yzeusy/checkuser/src/domain/contract"
-	"github.com/yzeusy/checkuser/src/domain/entity"
+	"github.com/zeusxprime/checkuser/src/domain/contract"
+	"github.com/zeusxprime/checkuser/src/domain/entity"
 )
 
 type CheckUserOutput struct {

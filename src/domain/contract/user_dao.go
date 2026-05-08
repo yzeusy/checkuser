@@ -3,7 +3,7 @@ package contract
 import (
 	"context"
 
-	"github.com/yzeusy/checkuser/src/domain/entity"
+	"github.com/zeusxprime/checkuser/src/domain/entity"
 )
 
 type UserDAO interface {

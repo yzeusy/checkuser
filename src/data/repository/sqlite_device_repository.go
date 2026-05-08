@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/yzeusy/checkuser/src/domain/contract"
-	"github.com/yzeusy/checkuser/src/domain/entity"
+	"github.com/zeusxprime/checkuser/src/domain/contract"
+	"github.com/zeusxprime/checkuser/src/domain/entity"
 	"github.com/labstack/gommon/log"
 
 	_ "github.com/ncruces/go-sqlite3/driver"

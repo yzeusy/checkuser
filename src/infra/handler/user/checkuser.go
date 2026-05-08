@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	user_use_case "github.com/yzeusy/checkuser/src/domain/usecase/user"
-	"github.com/yzeusy/checkuser/src/infra/handler"
+	user_use_case "github.com/zeusxprime/checkuser/src/domain/usecase/user"
+	"github.com/zeusxprime/checkuser/src/infra/handler"
 )
 
 type checkUserHandler struct {

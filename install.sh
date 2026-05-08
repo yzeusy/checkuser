@@ -2,7 +2,7 @@
 set -euo pipefail
 
 APP_NAME="checkuser"
-REPO_URL="${CHECKUSER_REPO_URL:-https://github.com/yzeusy/checkuser.git}"
+REPO_URL="${CHECKUSER_REPO_URL:-https://github.com/zeusxprime/checkuser.git}"
 BRANCH="${CHECKUSER_BRANCH:-main}"
 SRC_DIR="/opt/checkuser-src"
 BIN_PATH="/usr/local/bin/checkuser"

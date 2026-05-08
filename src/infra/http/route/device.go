@@ -1,8 +1,8 @@
 package route
 
 import (
-	"github.com/yzeusy/checkuser/src/infra/adapter"
-	"github.com/yzeusy/checkuser/src/infra/factory"
+	"github.com/zeusxprime/checkuser/src/infra/adapter"
+	"github.com/zeusxprime/checkuser/src/infra/factory"
 	"github.com/labstack/echo/v4"
 )
 

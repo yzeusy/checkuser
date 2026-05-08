@@ -3,7 +3,7 @@ package adapter
 import (
 	"net/http"
 
-	"github.com/yzeusy/checkuser/src/infra/handler"
+	"github.com/zeusxprime/checkuser/src/infra/handler"
 	"github.com/labstack/echo/v4"
 )
 

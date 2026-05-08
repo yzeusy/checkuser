@@ -3,7 +3,7 @@ package user_use_case
 import (
 	"time"
 
-	"github.com/yzeusy/checkuser/src/domain/contract"
+	"github.com/zeusxprime/checkuser/src/domain/contract"
 	"golang.org/x/net/context"
 )
 

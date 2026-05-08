@@ -1,4 +1,4 @@
-module github.com/yzeusy/checkuser
+module github.com/zeusxprime/checkuser
 
 go 1.21.6
 

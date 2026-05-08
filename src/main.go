@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/yzeusy/checkuser/src/data/repository"
-	"github.com/yzeusy/checkuser/src/infra/factory"
-	"github.com/yzeusy/checkuser/src/infra/http"
+	"github.com/zeusxprime/checkuser/src/data/repository"
+	"github.com/zeusxprime/checkuser/src/infra/factory"
+	"github.com/zeusxprime/checkuser/src/infra/http"
 )
 
 var (

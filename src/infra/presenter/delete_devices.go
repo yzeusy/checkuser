@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 
-	device_use_case "github.com/yzeusy/checkuser/src/domain/usecase/device"
+	device_use_case "github.com/zeusxprime/checkuser/src/domain/usecase/device"
 )
 
 type DeleteDevicesPresenter struct {

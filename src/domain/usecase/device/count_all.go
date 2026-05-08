@@ -1,7 +1,7 @@
 package device_use_case
 
 import (
-	"github.com/yzeusy/checkuser/src/domain/contract"
+	"github.com/zeusxprime/checkuser/src/domain/contract"
 	"golang.org/x/net/context"
 )
 

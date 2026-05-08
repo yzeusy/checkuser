@@ -1,14 +1,14 @@
 package factory
 
 import (
-	"github.com/yzeusy/checkuser/src/data"
-	"github.com/yzeusy/checkuser/src/data/cache"
-	"github.com/yzeusy/checkuser/src/data/connection"
-	"github.com/yzeusy/checkuser/src/data/dao"
-	"github.com/yzeusy/checkuser/src/data/repository"
-	user_use_case "github.com/yzeusy/checkuser/src/domain/usecase/user"
-	"github.com/yzeusy/checkuser/src/infra/handler"
-	user_handler "github.com/yzeusy/checkuser/src/infra/handler/user"
+	"github.com/zeusxprime/checkuser/src/data"
+	"github.com/zeusxprime/checkuser/src/data/cache"
+	"github.com/zeusxprime/checkuser/src/data/connection"
+	"github.com/zeusxprime/checkuser/src/data/dao"
+	"github.com/zeusxprime/checkuser/src/data/repository"
+	user_use_case "github.com/zeusxprime/checkuser/src/domain/usecase/user"
+	"github.com/zeusxprime/checkuser/src/infra/handler"
+	user_handler "github.com/zeusxprime/checkuser/src/infra/handler/user"
 )
 
 func MakeCheckUserHandler() handler.Handler {
