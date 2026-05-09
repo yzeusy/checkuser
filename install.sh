@@ -60,10 +60,63 @@ current_go_version() {
 }
 
 detect_go_arch() {
-  case "$(uname -m)" in
+  local machine
+  machine="$(uname -m)"
+  case "$machine" in
     x86_64|amd64) echo "amd64" ;;
-    aarch64|arm64) echo "arm64" ;;
+    aarch64|arm64|armv8*|arm64v8) echo "arm64" ;;
     *) echo "unsupported" ;;
+  esac
+}
+
+detect_deb_arch() {
+  local arch
+  arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
+  case "$arch" in
+    amd64|x86_64) echo "amd64" ;;
+    arm64|aarch64) echo "arm64" ;;
+    *) echo "unsupported" ;;
+  esac
+}
+
+check_ubuntu_support() {
+  local id version arch codename pretty
+
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    id="${ID:-}"
+    version="${VERSION_ID:-}"
+    codename="${VERSION_CODENAME:-}"
+    pretty="${PRETTY_NAME:-$id $version}"
+  else
+    echo -e "${RED}Não foi possível detectar o sistema operacional.${NC}"
+    exit 1
+  fi
+
+  arch="$(detect_deb_arch)"
+  if [[ "$arch" == "unsupported" ]]; then
+    echo -e "${RED}Arquitetura não suportada: $(uname -m).${NC}"
+    echo -e "${YELLOW}Suporte automático: Ubuntu x64/amd64 e ARM64/aarch64.${NC}"
+    exit 1
+  fi
+
+  if [[ "$id" != "ubuntu" ]]; then
+    echo -e "${YELLOW}Sistema detectado: ${pretty}.${NC}"
+    echo -e "${YELLOW}Este instalador foi validado para Ubuntu 20.04, 22.04 e 24.04 em amd64/arm64.${NC}"
+    return 0
+  fi
+
+  case "$version" in
+    20.04|22.04|24.04)
+      progress 2 "sistema compatível: Ubuntu ${version} ${arch}${codename:+/$codename}"
+      ;;
+    *)
+      echo -e "${YELLOW}Ubuntu ${version} detectado em ${arch}.${NC}"
+      echo -e "${YELLOW}Suporte oficial deste script: Ubuntu 20.04, 22.04 e 24.04 em amd64/arm64.${NC}"
+      echo -e "${YELLOW}Continuando por compatibilidade com base Debian/Ubuntu...${NC}"
+      sleep 1
+      ;;
   esac
 }
 
@@ -188,9 +241,11 @@ EOS
 }
 
 ensure_deps() {
+  check_ubuntu_support
   progress 5 "preparando dependências"
+  export DEBIAN_FRONTEND=noninteractive
   apt-get update -y >/dev/null
-  DEBIAN_FRONTEND=noninteractive apt-get install -y git curl wget ca-certificates tar build-essential sqlite3 jq python3 >/dev/null
+  apt-get install -y git curl wget ca-certificates tar build-essential sqlite3 jq python3 >/dev/null
 }
 
 ensure_go() {
@@ -348,7 +403,7 @@ build_binary() {
   progress 75 "compilando CheckUser"
   cd "$SRC_DIR"
   go mod download >/dev/null 2>&1 || true
-  go build -ldflags="-w -s" -o "$BIN_PATH" ./src
+  GOOS=linux GOARCH="$(detect_go_arch)" go build -ldflags="-w -s" -o "$BIN_PATH" ./src
   chmod +x "$BIN_PATH"
 }
 
