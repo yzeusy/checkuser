@@ -240,9 +240,34 @@ EOS
   export PATH="/usr/local/go/bin:$PATH"
 }
 
+clean_conflicting_apt_sources() {
+  # Ubuntu 24.04 (noble) pode quebrar o apt update quando existe repo antigo do Speedtest/Ookla:
+  # https://packagecloud.io/ookla/speedtest-cli/ubuntu noble Release não existe.
+  # O CheckUser não depende desse repositório, então apenas desativamos a source problemática.
+  local files f
+  files="/etc/apt/sources.list"
+  if [[ -d /etc/apt/sources.list.d ]]; then
+    while IFS= read -r f; do
+      files="$files $f"
+    done < <(find /etc/apt/sources.list.d -maxdepth 1 -type f \( -name '*.list' -o -name '*.sources' \) 2>/dev/null)
+  fi
+
+  for f in $files; do
+    [[ -f "$f" ]] || continue
+    if grep -Eqi 'packagecloud\.io/(ookla|.*speedtest)|ookla/speedtest-cli|speedtest-cli/ubuntu' "$f"; then
+      cp -a "$f" "${f}.disabled-checkuser" 2>/dev/null || true
+      sed -i -E 's|^([[:space:]]*deb[[:space:]].*packagecloud\.io/(ookla|.*speedtest).*)|# disabled by checkuser installer: \1|Ig' "$f" 2>/dev/null || true
+      sed -i -E 's|^([[:space:]]*Types:[[:space:]]*deb.*)|# disabled by checkuser installer: \1|Ig' "$f" 2>/dev/null || true
+      sed -i -E 's|^([[:space:]]*URIs:[[:space:]].*packagecloud\.io/(ookla|.*speedtest).*)|# disabled by checkuser installer: \1|Ig' "$f" 2>/dev/null || true
+      sed -i -E 's|^([[:space:]]*Suites:[[:space:]]*noble.*)|# disabled by checkuser installer: \1|Ig' "$f" 2>/dev/null || true
+    fi
+  done
+}
+
 ensure_deps() {
   check_ubuntu_support
   progress 5 "preparando dependências"
+  clean_conflicting_apt_sources
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y >/dev/null
   apt-get install -y git curl wget ca-certificates tar build-essential sqlite3 jq python3 >/dev/null
