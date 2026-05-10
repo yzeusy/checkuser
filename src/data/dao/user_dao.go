@@ -287,22 +287,27 @@ func (u *userDAO) getExpirationDate(ctx context.Context, username string) (time.
 }
 
 func (u *userDAO) getExpirationDateByLookup(ctx context.Context, username string, lookup map[string]bool) (time.Time, error) {
-	// 1. DragonCore Xray: validade real em xray.expiry, exposta pelo menu.
+	// 1. Testes SSH em minutos: validade exata gravada pelo DragonCore em /etc/DragonTeste.
+	if expirationDate, ok := u.getDragonTesteExactExpirationDate(lookup); ok {
+		return expirationDate, nil
+	}
+
+	// 2. DragonCore Xray: validade real em xray.expiry, exposta pelo menu.
 	if expirationDate, ok := u.getDragonCoreXrayExpirationDate(ctx, lookup); ok {
 		return expirationDate, nil
 	}
 
-	// 2. Bot Telegram.
+	// 3. Bot Telegram.
 	if expirationDate, ok := u.getBotAccessExpirationDate(lookup); ok {
 		return expirationDate, nil
 	}
 
-	// 3. Base compartilhada.
+	// 4. Base compartilhada.
 	if expirationDate, ok := u.getUsuariosDBExpirationDate(lookup); ok {
 		return expirationDate, nil
 	}
 
-	// 4. SSH/Linux.
+	// 5. SSH/Linux.
 	for _, candidate := range orderedLookupValues(lookup) {
 		if expirationDate, err := u.getLinuxExpirationDate(ctx, candidate); err == nil {
 			return expirationDate, nil
@@ -310,6 +315,56 @@ func (u *userDAO) getExpirationDateByLookup(ctx context.Context, username string
 	}
 
 	return time.Time{}, fmt.Errorf("validade nao encontrada para %s", username)
+}
+
+func (u *userDAO) getDragonTesteExactExpirationDate(lookup map[string]bool) (time.Time, bool) {
+	paths := []string{
+		"/etc/DragonTeste/expirations.db",
+	}
+
+	for name := range lookup {
+		if name == "" {
+			continue
+		}
+		paths = append(paths,
+			fmt.Sprintf("/etc/DragonTeste/expirations/%s.txt", name),
+			fmt.Sprintf("/etc/DragonTeste/expirations/%s", name),
+			fmt.Sprintf("/etc/DragonTeste/%s.exp", name),
+		)
+	}
+
+	var last time.Time
+	ok := false
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+
+			value := line
+			if strings.Contains(line, "|") {
+				parts := strings.SplitN(line, "|", 2)
+				if len(parts) != 2 || !lookup[normalizeKey(parts[0])] {
+					continue
+				}
+				value = strings.TrimSpace(parts[1])
+			}
+
+			if t, parsed := parseDateToEndOfDay(value); parsed {
+				if !ok || t.After(last) {
+					last = t
+					ok = true
+				}
+			}
+		}
+	}
+
+	return last, ok
 }
 
 func (u *userDAO) getDragonCoreXrayExpirationDate(ctx context.Context, lookup map[string]bool) (time.Time, bool) {
