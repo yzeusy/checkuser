@@ -346,25 +346,59 @@ func (u *userDAO) getDragonTesteExactExpirationDate(lookup map[string]bool) (tim
 				continue
 			}
 
-			value := line
-			if strings.Contains(line, "|") {
-				parts := strings.SplitN(line, "|", 2)
-				if len(parts) != 2 || !lookup[normalizeKey(parts[0])] {
-					continue
-				}
-				value = strings.TrimSpace(parts[1])
-			}
-
-			if t, parsed := parseDateToEndOfDay(value); parsed {
-				if !ok || t.After(last) {
-					last = t
-					ok = true
+			values := expirationValuesFromMirrorLine(line, lookup)
+			for _, value := range values {
+				if t, parsed := parseDateToEndOfDay(value); parsed {
+					if !ok || t.After(last) {
+						last = t
+						ok = true
+					}
 				}
 			}
 		}
 	}
 
 	return last, ok
+}
+
+func expirationValuesFromMirrorLine(line string, lookup map[string]bool) []string {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil
+	}
+
+	// Arquivo individual: apenas a validade.
+	values := []string{line}
+
+	// Formato do bot: usuario 2026-05-11 15:30:00
+	fields := strings.Fields(line)
+	if len(fields) >= 2 && lookup[normalizeKey(fields[0])] {
+		values = append(values, strings.Join(fields[1:], " "))
+	}
+
+	// Formatos alternativos: usuario|2026-05-11 15:30:00, usuario=..., usuario:...
+	for _, sep := range []string{"|", "=", ":"} {
+		if strings.Contains(line, sep) {
+			parts := strings.SplitN(line, sep, 2)
+			if len(parts) == 2 && lookup[normalizeKey(parts[0])] {
+				values = append(values, strings.TrimSpace(parts[1]))
+			}
+		}
+	}
+
+	// JSONL simples: {"username":"x","expires_at":"..."}
+	if strings.HasPrefix(line, "{") {
+		var row map[string]any
+		if err := json.Unmarshal([]byte(line), &row); err == nil && rowMatchesLookup(row, lookup) {
+			for _, key := range []string{"expires_at", "expiration_date", "expiry", "expires", "validade"} {
+				if v := stringFromAny(row[key]); v != "" {
+					values = append(values, v)
+				}
+			}
+		}
+	}
+
+	return values
 }
 
 func (u *userDAO) getDragonCoreXrayExpirationDate(ctx context.Context, lookup map[string]bool) (time.Time, bool) {
