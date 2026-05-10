@@ -287,14 +287,14 @@ func (u *userDAO) getExpirationDate(ctx context.Context, username string) (time.
 }
 
 func (u *userDAO) getExpirationDateByLookup(ctx context.Context, username string, lookup map[string]bool) (time.Time, error) {
-	// 1. Testes SSH em minutos: validade exata gravada pelo DragonCore em /etc/DragonTeste.
-	if expirationDate, ok := u.getDragonTesteExactExpirationDate(lookup); ok {
+	// 1. Bot Telegram: fonte principal da validade criada/renovada no bot.
+	//    Usa expires_at antes de expiry para respeitar testes em horas/minutos.
+	if expirationDate, ok := u.getBotAccessExpirationDate(lookup); ok {
 		return expirationDate, nil
 	}
 
-	// 2. Bot Telegram: prioridade alta porque ele guarda expires_at com hora real.
-	//    Isso evita cair no DragonCore/Linux, que normalmente retornam só data.
-	if expirationDate, ok := u.getBotAccessExpirationDate(lookup); ok {
+	// 2. Espelhos de validade exata gravados pelo bot/SSH.
+	if expirationDate, ok := u.getDragonTesteExactExpirationDate(lookup); ok {
 		return expirationDate, nil
 	}
 
@@ -461,20 +461,26 @@ func (u *userDAO) listDragonCoreXrayUsers(ctx context.Context) []xrayIdentity {
 func (u *userDAO) getBotAccessExpirationDate(lookup map[string]bool) (time.Time, bool) {
 	var last time.Time
 	ok := false
-	for _, row := range readBotLogRows() {
+	rows := readBotLogRows()
+	for _, row := range rows {
 		if !rowMatchesLookup(row, lookup) {
 			continue
 		}
-		expiry := stringFromAny(row["expiry"])
-		if expiry == "" {
-			expiry = stringFromAny(row["expires_at"])
-		}
-		if expiry == "" {
-			expiry = stringFromAny(row["validade"])
-		}
-		if t, parsed := parseDateToEndOfDay(expiry); parsed {
-			last = t
-			ok = true
+
+		// O bot grava dois campos:
+		//   expires_at: validade real com hora/minuto, usada para testes e último dia.
+		//   expiry/expiration_date: data limpa para exibição.
+		// Por isso expires_at SEMPRE precisa ter prioridade.
+		for _, key := range []string{"expires_at", "expiration_datetime", "valid_until", "expiry", "expiration_date", "validade", "expires"} {
+			value := stringFromAny(row[key])
+			if value == "" {
+				continue
+			}
+			if t, parsed := parseDateToEndOfDay(value); parsed {
+				last = t
+				ok = true
+				break
+			}
 		}
 	}
 	return last, ok

@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	version     = "0.1.13-primecel"
+	version     = "0.1.14-primecel"
 	version_str = fmt.Sprintf("checkuser %s", version)
 	author      = "Glemison C. Dutra"
 	email       = "glemyson20@gmail.com"
