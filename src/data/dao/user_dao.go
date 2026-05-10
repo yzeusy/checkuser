@@ -292,13 +292,14 @@ func (u *userDAO) getExpirationDateByLookup(ctx context.Context, username string
 		return expirationDate, nil
 	}
 
-	// 2. DragonCore Xray: validade real em xray.expiry, exposta pelo menu.
-	if expirationDate, ok := u.getDragonCoreXrayExpirationDate(ctx, lookup); ok {
+	// 2. Bot Telegram: prioridade alta porque ele guarda expires_at com hora real.
+	//    Isso evita cair no DragonCore/Linux, que normalmente retornam só data.
+	if expirationDate, ok := u.getBotAccessExpirationDate(lookup); ok {
 		return expirationDate, nil
 	}
 
-	// 3. Bot Telegram.
-	if expirationDate, ok := u.getBotAccessExpirationDate(lookup); ok {
+	// 3. DragonCore Xray: validade em xray.expiry, normalmente só com data.
+	if expirationDate, ok := u.getDragonCoreXrayExpirationDate(ctx, lookup); ok {
 		return expirationDate, nil
 	}
 
@@ -320,6 +321,11 @@ func (u *userDAO) getExpirationDateByLookup(ctx context.Context, username string
 func (u *userDAO) getDragonTesteExactExpirationDate(lookup map[string]bool) (time.Time, bool) {
 	paths := []string{
 		"/etc/DragonTeste/expirations.db",
+		"/root/usuarios_expiracao.db",
+		"/root/checkuser_expirations.db",
+	}
+	if custom := strings.TrimSpace(os.Getenv("CHECKUSER_EXACT_EXPIRATIONS_DB")); custom != "" {
+		paths = append([]string{custom}, paths...)
 	}
 
 	for name := range lookup {
@@ -330,6 +336,8 @@ func (u *userDAO) getDragonTesteExactExpirationDate(lookup map[string]bool) (tim
 			fmt.Sprintf("/etc/DragonTeste/expirations/%s.txt", name),
 			fmt.Sprintf("/etc/DragonTeste/expirations/%s", name),
 			fmt.Sprintf("/etc/DragonTeste/%s.exp", name),
+			fmt.Sprintf("/root/usuarios_expiracao/%s.txt", name),
+			fmt.Sprintf("/root/usuarios_expiracao/%s", name),
 		)
 	}
 
