@@ -255,39 +255,36 @@ helper = base / 'src/domain/usecase/user/expiration_format.go'
 helper.write_text("""package user_use_case
 
 import (
-	\"fmt\"
-	\"math\"
-	\"time\"
+	"fmt"
+	"time"
 )
 
-func expirationRemainingInfo(expiresAt time.Time) (string, int, string) {
+func expirationRemainingInfo(expiresAt time.Time) (string, int, int, string) {
 	remaining := time.Until(expiresAt)
 	if remaining <= 0 {
-		return \"expirado\", 0, \"expired\"
+		return "expirado", 0, 0, "expired"
 	}
 
-	hours := int(math.Ceil(remaining.Hours()))
-	if hours < 1 {
-		hours = 1
+	totalMinutes := int(remaining.Minutes())
+	if totalMinutes < 1 {
+		totalMinutes = 1
 	}
 
-	// Acessos de horas devem aparecer como horas.
-	// 2h, 4h, 8h e 24h ficam como horas.
-	// Acima de 24h, mostra em dias.
-	if hours <= 24 {
-		return fmt.Sprintf(\"%dh\", hours), hours, \"hours\"
+	// Menos de 24h: mostra hora:minuto, sem ficar como 0 dias.
+	if totalMinutes < 1440 {
+		hours := totalMinutes / 60
+		minutes := totalMinutes % 60
+		return fmt.Sprintf("%02dh:%02d", hours, minutes), 0, totalMinutes, "minutes"
 	}
 
-	days := int(math.Ceil(remaining.Hours() / 24))
-	if days < 1 {
-		days = 1
+	// Acima de 24h: calcula em tempo real e arredonda para baixo.
+	// Ex.: 29 dias e algumas horas = 29 dias, não fica preso em 30.
+	days := totalMinutes / 1440
+	if days <= 1 {
+		return "1 dia", 1, 1, "days"
 	}
 
-	if days == 1 {
-		return \"1 dia\", days, \"days\"
-	}
-
-	return fmt.Sprintf(\"%d dias\", days), days, \"days\"
+	return fmt.Sprintf("%d dias", days), days, days, "days"
 }
 """)
 
@@ -301,11 +298,13 @@ def patch_checkuser_go(path: Path):
     if 'expirationRemainingInfo(user.ExpiresAt)' not in s:
         ret = 'return &CheckUserOutput{\n\t\tID:'
         if ret in s:
-            s = s.replace(ret, 'remainingLabel, remainingValue, remainingUnit := expirationRemainingInfo(user.ExpiresAt)\n\n\treturn &CheckUserOutput{\n\t\tID:', 1)
+            s = s.replace(ret, 'remainingLabel, remainingDays, remainingValue, remainingUnit := expirationRemainingInfo(user.ExpiresAt)\n\n\treturn &CheckUserOutput{\n\t\tID:', 1)
     old = 'ExpiresDays: int(time.Until(user.ExpiresAt).Hours() / 24),'
-    new = 'ExpiresDays: int(time.Until(user.ExpiresAt).Hours() / 24),\n\t\tExpiresIn:   remainingLabel,\n\t\tRemaining:   remainingLabel,\n\t\tDisplay:     remainingLabel,\n\t\tRemainValue: remainingValue,\n\t\tRemainUnit:  remainingUnit,'
+    new = 'ExpiresDays: remainingDays,\n\t\tExpiresIn:   remainingLabel,\n\t\tRemaining:   remainingLabel,\n\t\tDisplay:     remainingLabel,\n\t\tRemainValue: remainingValue,\n\t\tRemainUnit:  remainingUnit,'
     if old in s and 'ExpiresIn:   remainingLabel' not in s:
         s = s.replace(old, new, 1)
+    s = s.replace('\n\t"time"\n', '\n')
+    s = s.replace('\n\t"time"', '')
     path.write_text(s)
 
 
@@ -318,11 +317,13 @@ def patch_details_go(path: Path):
     if 'expirationRemainingInfo(user.ExpiresAt)' not in s:
         ret = 'return &DetailUserOutput{\n\t\tID:'
         if ret in s:
-            s = s.replace(ret, 'remainingLabel, remainingValue, remainingUnit := expirationRemainingInfo(user.ExpiresAt)\n\n\treturn &DetailUserOutput{\n\t\tID:', 1)
+            s = s.replace(ret, 'remainingLabel, remainingDays, remainingValue, remainingUnit := expirationRemainingInfo(user.ExpiresAt)\n\n\treturn &DetailUserOutput{\n\t\tID:', 1)
     old = 'ExpiresDays: int(time.Until(user.ExpiresAt).Hours() / 24),'
-    new = 'ExpiresDays: int(time.Until(user.ExpiresAt).Hours() / 24),\n\t\tExpiresIn:   remainingLabel,\n\t\tRemaining:   remainingLabel,\n\t\tDisplay:     remainingLabel,\n\t\tRemainValue: remainingValue,\n\t\tRemainUnit:  remainingUnit,'
+    new = 'ExpiresDays: remainingDays,\n\t\tExpiresIn:   remainingLabel,\n\t\tRemaining:   remainingLabel,\n\t\tDisplay:     remainingLabel,\n\t\tRemainValue: remainingValue,\n\t\tRemainUnit:  remainingUnit,'
     if old in s and 'ExpiresIn:   remainingLabel' not in s:
         s = s.replace(old, new, 1)
+    s = s.replace('\n\t"time"\n', '\n')
+    s = s.replace('\n\t"time"', '')
     path.write_text(s)
 
 

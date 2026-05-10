@@ -338,7 +338,7 @@ func (u *userDAO) listDragonCoreXrayUsers(ctx context.Context) []xrayIdentity {
 	}
 
 	items := make([]xrayIdentity, 0)
-	linePattern := regexp.MustCompile(`(?i)ID:\s*\d+\s*\|\s*NICK:\s*([^|]+)\s*\|\s*UUID:\s*([^|]+)\s*\|\s*EXPIRA:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{2}/[0-9]{2}/[0-9]{4})`)
+	linePattern := regexp.MustCompile(`(?i)ID:\s*\d+\s*\|\s*NICK:\s*([^|]+)\s*\|\s*UUID:\s*([^|]+)\s*\|\s*EXPIRA:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}(?:[ T][0-9]{2}:[0-9]{2}(?::[0-9]{2})?)?|[0-9]{2}/[0-9]{2}/[0-9]{4}(?:\s+[0-9]{2}:[0-9]{2}(?::[0-9]{2})?)?)`)
 	for _, output := range outputs {
 		for _, line := range strings.Split(output, "\n") {
 			line = strings.TrimSpace(line)
@@ -698,17 +698,45 @@ func parseDateToEndOfDay(value string) (time.Time, bool) {
 	if value == "" || strings.EqualFold(value, "suspenso") || strings.EqualFold(value, "suspended") {
 		return time.Time{}, false
 	}
-	layouts := []string{
+
+	// Timestamp Unix em segundos ou milissegundos.
+	if regexp.MustCompile(`^\d{10,13}$`).MatchString(value) {
+		if n, err := strconv.ParseInt(value, 10, 64); err == nil {
+			if len(value) == 13 {
+				return time.UnixMilli(n).In(time.Local), true
+			}
+			return time.Unix(n, 0).In(time.Local), true
+		}
+	}
+
+	dateTimeLayouts := []string{
+		time.RFC3339,
+		"2006-01-02T15:04:05Z07:00",
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04",
+		"2006/01/02 15:04:05",
+		"2006/01/02 15:04",
+		"02/01/2006 15:04:05",
+		"02/01/2006 15:04",
+		"02-01-2006 15:04:05",
+		"02-01-2006 15:04",
+	}
+	for _, layout := range dateTimeLayouts {
+		if parsed, err := time.ParseInLocation(layout, value, time.Local); err == nil {
+			return parsed, true
+		}
+	}
+
+	dateOnlyLayouts := []string{
 		"2006-01-02",
 		"02/01/2006",
 		"02-01-2006",
 		"Jan 02, 2006",
 		"Jan 2, 2006",
 		"2006/01/02",
-		"2006-01-02 15:04:05",
-		"2006-01-02T15:04:05Z07:00",
 	}
-	for _, layout := range layouts {
+	for _, layout := range dateOnlyLayouts {
 		if parsed, err := time.ParseInLocation(layout, value, time.Local); err == nil {
 			return endOfDay(parsed), true
 		}

@@ -192,7 +192,7 @@ const HTML_CONTENT = `
             hideUserNotFound()
 
             nameElement.innerHTML = data.username ?? ''
-            expiresAtElement.innerHTML = data.expires_at ?? ''
+            expiresAtElement.innerHTML = data.expires_in ?? data.expires_at ?? ''
             limitElement.innerHTML = data.limit?.toString()?.padStart(2, '0') ?? ''
             connectionsElement.innerHTML = data.connections?.toString()?.padStart(2, '0') ?? ''
         }, 500)

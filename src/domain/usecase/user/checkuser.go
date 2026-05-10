@@ -2,7 +2,6 @@ package user_use_case
 
 import (
 	"context"
-	"time"
 
 	"github.com/zeusxprime/checkuser/src/domain/contract"
 	"github.com/zeusxprime/checkuser/src/domain/entity"
@@ -13,6 +12,11 @@ type CheckUserOutput struct {
 	Username    string `json:"username"`
 	ExpiresAt   string `json:"expiration_date"`
 	ExpiresDays int    `json:"expiration_days"`
+	ExpiresIn   string `json:"expires_in"`
+	Remaining   string `json:"expiration_remaining"`
+	Display     string `json:"expiration_display"`
+	RemainValue int    `json:"expiration_value"`
+	RemainUnit  string `json:"expiration_unit"`
 	Limit       int    `json:"limit_connections"`
 	Connections int    `json:"count_connections"`
 }
@@ -67,11 +71,18 @@ func (c *CheckUserUseCase) Execute(ctx context.Context, username, deviceID strin
 		}
 	}
 
+	remainingLabel, remainingDays, remainingValue, remainingUnit := expirationRemainingInfo(user.ExpiresAt)
+
 	return &CheckUserOutput{
 		ID:          user.ID,
 		Username:    user.Username,
 		ExpiresAt:   user.ExpiresAt.Format("02/01/2006"),
-		ExpiresDays: int(time.Until(user.ExpiresAt).Hours() / 24),
+		ExpiresDays: remainingDays,
+		ExpiresIn:   remainingLabel,
+		Remaining:   remainingLabel,
+		Display:     remainingLabel,
+		RemainValue: remainingValue,
+		RemainUnit:  remainingUnit,
 		Limit:       user.Limit,
 		Connections: existingDevices,
 	}, nil

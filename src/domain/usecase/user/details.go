@@ -1,8 +1,6 @@
 package user_use_case
 
 import (
-	"time"
-
 	"github.com/zeusxprime/checkuser/src/domain/contract"
 	"golang.org/x/net/context"
 )
@@ -12,6 +10,11 @@ type DetailUserOutput struct {
 	Username    string `json:"username"`
 	ExpiresAt   string `json:"expires_at"`
 	ExpiresDays int    `json:"expires_days"`
+	ExpiresIn   string `json:"expires_in"`
+	Remaining   string `json:"expiration_remaining"`
+	Display     string `json:"expiration_display"`
+	RemainValue int    `json:"expiration_value"`
+	RemainUnit  string `json:"expiration_unit"`
 	Limit       int    `json:"limit"`
 	Connections int    `json:"connections"`
 }
@@ -42,12 +45,19 @@ func (c *DetailUserUseCase) Execute(ctx context.Context, username string) (*Deta
 		connections = 0
 	}
 
+	remainingLabel, remainingDays, remainingValue, remainingUnit := expirationRemainingInfo(user.ExpiresAt)
+
 	return &DetailUserOutput{
 		ID:          user.ID,
 		Username:    user.Username,
 		ExpiresAt:   user.ExpiresAt.Format("02/01/2006"),
 		Limit:       user.Limit,
-		ExpiresDays: int(time.Until(user.ExpiresAt).Hours() / 24),
+		ExpiresDays: remainingDays,
+		ExpiresIn:   remainingLabel,
+		Remaining:   remainingLabel,
+		Display:     remainingLabel,
+		RemainValue: remainingValue,
+		RemainUnit:  remainingUnit,
 		Connections: connections,
 	}, nil
 }
