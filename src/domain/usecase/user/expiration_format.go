@@ -11,10 +11,9 @@ func expirationRemainingInfo(expiresAt time.Time) (string, int, int, string) {
 		return "expirado", 0, 0, "expired"
 	}
 
+	// Arredonda para baixo: no último minuto mostra 00h:00,
+	// mas a conta só expira quando remaining <= 0.
 	totalMinutes := int(remaining.Minutes())
-	if totalMinutes < 1 {
-		totalMinutes = 1
-	}
 
 	// Menos de 24h: mostra somente hora:minuto, como se fosse 0 dias.
 	// Mantém expiration_unit como "days" para compatibilidade com apps/checkers
@@ -25,10 +24,8 @@ func expirationRemainingInfo(expiresAt time.Time) (string, int, int, string) {
 		return fmt.Sprintf("%02dh:%02d", hours, minutes), 0, 0, "days"
 	}
 
-	// Acima de 24h: arredonda para cima.
-	// Ex.: conta criada por 30 dias pode estar com 29d 23h restantes
-	// por causa dos segundos/minutos já passados; ainda deve mostrar 30 dias.
-	days := (totalMinutes + 1439) / 1440
+	// Acima de 24h: mostra em dias, sem acumular como 29h:59.
+	days := totalMinutes / 1440
 	if days <= 1 {
 		return "1 dia", 1, 1, "days"
 	}
