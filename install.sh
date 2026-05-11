@@ -4,6 +4,12 @@ set -euo pipefail
 APP_NAME="checkuser"
 REPO_URL="${CHECKUSER_REPO_URL:-https://github.com/zeusxprime/checkuser.git}"
 BRANCH="${CHECKUSER_BRANCH:-main}"
+
+# Token do repositório privado do CheckUser.
+# Troque TOKEN_DO_CHECKUSER pelo token real ou envie por variável de ambiente.
+CHECKUSER_GITHUB_TOKEN="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"
+export GIT_TERMINAL_PROMPT=0
+export GCM_INTERACTIVE=Never
 SRC_DIR="/opt/checkuser-src"
 BIN_PATH="/usr/local/bin/checkuser"
 STARTER_PATH="/usr/local/bin/checkuser-start"
@@ -65,6 +71,31 @@ detect_go_arch() {
     aarch64|arm64) echo "arm64" ;;
     *) echo "unsupported" ;;
   esac
+}
+
+
+is_placeholder_token() {
+  case "${1:-}" in
+    ""|TOKEN_DO_*|SEU_TOKEN*|tokenaqui|TOKEN_AQUI) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+urlencode_token() {
+  printf '%s' "$1" | sed 's/%/%25/g; s/@/%40/g; s/:/%3A/g; s/#/%23/g; s/\//%2F/g; s/?/%3F/g; s/&/%26/g'
+}
+
+repo_url_with_token() {
+  local repo="$1"
+  local token="$2"
+  local encoded
+  encoded="$(urlencode_token "$token")"
+
+  if [[ "$repo" == https://github.com/* ]]; then
+    printf '%s' "${repo/https:\/\/github.com\//https:\/\/x-access-token:${encoded}@github.com/}"
+  else
+    printf '%s' "$repo"
+  fi
 }
 
 get_public_ip() {
@@ -206,8 +237,18 @@ ensure_go() {
 clone_or_update_repo() {
   progress 45 "baixando CheckUser do GitHub"
   rm -rf "$SRC_DIR"
-  git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$SRC_DIR" >/dev/null 2>&1 || {
-    echo -e "\n${RED}Erro ao clonar: $REPO_URL${NC}"
+
+  export GIT_TERMINAL_PROMPT=0
+  export GCM_INTERACTIVE=Never
+
+  local clone_url="$REPO_URL"
+  if ! is_placeholder_token "${CHECKUSER_GITHUB_TOKEN:-}"; then
+    clone_url="$(repo_url_with_token "$REPO_URL" "$CHECKUSER_GITHUB_TOKEN")"
+  fi
+
+  git clone --depth 1 --branch "$BRANCH" "$clone_url" "$SRC_DIR" >/dev/null 2>&1 || {
+    echo -e "\n${RED}Erro ao clonar o repositório do CheckUser.${NC}"
+    echo -e "${YELLOW}Se o repo for privado, verifique CHECKUSER_GITHUB_TOKEN com permissão Contents: Read-only.${NC}"
     exit 1
   }
 
