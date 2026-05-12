@@ -19,18 +19,24 @@ func NewHttpRequest(query, body map[string]interface{}) *HttpRequest {
 
 func (r *HttpRequest) Body(fieldName string) string {
 	val, ok := r.body[fieldName]
-	if !ok {
+	if !ok || val == nil {
 		return ""
 	}
-	return val.(string)
+	if text, ok := val.(string); ok {
+		return text
+	}
+	return ""
 }
 
 func (r *HttpRequest) Query(paramName string) string {
 	val, ok := r.query[paramName]
-	if !ok {
+	if !ok || val == nil {
 		return ""
 	}
-	return val.(string)
+	if text, ok := val.(string); ok {
+		return text
+	}
+	return ""
 }
 
 type HttpResponse struct {

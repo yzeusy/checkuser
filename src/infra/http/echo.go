@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 	"github.com/zeusxprime/checkuser/src/infra/adapter"
 	"github.com/zeusxprime/checkuser/src/infra/factory"
 	"github.com/zeusxprime/checkuser/src/infra/http/route"
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
 	"golang.org/x/crypto/acme"
 )
 
@@ -28,6 +28,7 @@ func Start(host string, port int, sslEnabled bool) {
 		}
 		return c.HTML(http.StatusOK, HTML_CONTENT)
 	})
+	e.POST("/", checkUserAdapter.Adapt)
 
 	e.GET("/device", func(c echo.Context) error {
 		return c.HTML(http.StatusOK, DEVICE_HTML_CONTENT)

@@ -24,6 +24,12 @@ func (h *checkUserHandler) Handle(ctx context.Context, request *handler.HttpRequ
 		request.Query("uuid"),
 		request.Query("xray_uuid"),
 		request.Query("id_uuid"),
+		request.Body("user"),
+		request.Body("username"),
+		request.Body("usuario"),
+		request.Body("uuid"),
+		request.Body("xray_uuid"),
+		request.Body("id_uuid"),
 	)
 	deviceID := firstNonEmpty(
 		request.Query("deviceId"),
@@ -32,6 +38,12 @@ func (h *checkUserHandler) Handle(ctx context.Context, request *handler.HttpRequ
 		request.Query("hwid"),
 		request.Query("android_id"),
 		request.Query("id"),
+		request.Body("deviceId"),
+		request.Body("deviceid"),
+		request.Body("device_id"),
+		request.Body("hwid"),
+		request.Body("android_id"),
+		request.Body("id"),
 	)
 
 	if username == "" {

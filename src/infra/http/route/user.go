@@ -1,19 +1,22 @@
 package route
 
 import (
+	"github.com/labstack/echo/v4"
 	"github.com/zeusxprime/checkuser/src/infra/adapter"
 	"github.com/zeusxprime/checkuser/src/infra/factory"
-	"github.com/labstack/echo/v4"
 )
 
 func CreateUserRoute(g *echo.Group) {
 	// Mantem compatibilidade com rotas de consulta.
 	// Base original: http://127.0.0.1:2052
 	// Consulta tambem aceita: /check?user=USUARIO e /check/USUARIO
-	g.GET("/check", adapter.NewEchoAdapter(factory.MakeCheckUserHandler()).Adapt)
+	checkAdapter := adapter.NewEchoAdapter(factory.MakeCheckUserHandler())
+	g.GET("/check", checkAdapter.Adapt)
+	g.POST("/check", checkAdapter.Adapt)
 
 	// Compatibilidade com rotas antigas do projeto original.
-	g.GET("/check/:username", adapter.NewEchoAdapter(factory.MakeCheckUserHandler()).Adapt)
+	g.GET("/check/:username", checkAdapter.Adapt)
+	g.POST("/check/:username", checkAdapter.Adapt)
 	g.GET("/details/:username", adapter.NewEchoAdapter(factory.MakeDetailsUserHandler()).Adapt)
 	g.GET("/count", adapter.NewEchoAdapter(factory.MakeCountConnectionsHandler()).Adapt)
 }
