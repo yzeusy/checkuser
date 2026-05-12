@@ -6,7 +6,6 @@ import (
 	"net"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/zeusxprime/checkuser/src/domain/contract"
 )
@@ -32,7 +31,7 @@ func NewAUXOpenVPNConnection(host string, port int) AUXOpenVPNConnection {
 }
 
 func (vpn *openVPNConnection) Connect() {
-	conn, _ := net.DialTimeout("tcp", net.JoinHostPort(vpn.host, fmt.Sprintf("%d", vpn.port)), 700*time.Millisecond)
+	conn, _ := net.Dial("tcp", net.JoinHostPort(vpn.host, fmt.Sprintf("%d", vpn.port)))
 	vpn.socket = conn
 }
 
@@ -48,12 +47,8 @@ func (vpn *openVPNConnection) Receive(size int) string {
 		return ""
 	}
 	data := make([]byte, size)
-	_ = vpn.socket.SetReadDeadline(time.Now().Add(700 * time.Millisecond))
-	n, err := vpn.socket.Read(data)
-	if err != nil || n <= 0 {
-		return ""
-	}
-	return string(data[:n])
+	vpn.socket.Read(data)
+	return string(data)
 }
 
 func (vpn *openVPNConnection) Close() {

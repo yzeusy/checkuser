@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/labstack/gommon/log"
 	"github.com/zeusxprime/checkuser/src/domain/contract"
 	"github.com/zeusxprime/checkuser/src/domain/entity"
+	"github.com/labstack/gommon/log"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
@@ -89,9 +89,6 @@ func NewSQLiteDeviceRepository() contract.DeviceRepository {
 	if err != nil {
 		log.Fatal(err)
 	}
-	db.SetMaxOpenConns(1)
-	_, _ = db.Exec(`PRAGMA busy_timeout = 3000`)
-	_, _ = db.Exec(`PRAGMA journal_mode = WAL`)
 
 	migrateDevicesTable(db)
 

@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/zeusxprime/checkuser/src/domain/contract"
@@ -23,12 +22,6 @@ type xrayIdentity struct {
 	Nick   string
 	UUID   string
 	Expiry string
-}
-
-var xrayListCache struct {
-	sync.Mutex
-	items   []xrayIdentity
-	expires time.Time
 }
 
 func NewUserDAO(executor contract.Executor) contract.UserDAO {
@@ -86,25 +79,21 @@ func (u *userDAO) FindByUsername(ctx context.Context, username string) (*entity.
 
 func (u *userDAO) canonicalUsername(ctx context.Context, username string) string {
 	wanted := normalizeKey(username)
-
-	// Primeiro usa o log local do bot, que é rápido e contém o par username/UUID
-	// recém-criado. Isso evita depender do psql/menu.php logo na primeira conexão.
-	for _, row := range readBotLogRows() {
-		rowUsername := strings.TrimSpace(stringFromAny(row["username"]))
-		rowUUID := strings.TrimSpace(stringFromAny(row["uuid"]))
-		if normalizeKey(rowUsername) == wanted || normalizeKey(rowUUID) == wanted {
-			if rowUsername != "" {
-				return rowUsername
-			}
-		}
-	}
-
 	for _, item := range u.listDragonCoreXrayUsers(ctx) {
 		nick := strings.TrimSpace(item.Nick)
 		uuid := strings.TrimSpace(item.UUID)
 		if normalizeKey(nick) == wanted || normalizeKey(uuid) == wanted {
 			if nick != "" {
 				return nick
+			}
+		}
+	}
+	for _, row := range readBotLogRows() {
+		rowUsername := strings.TrimSpace(stringFromAny(row["username"]))
+		rowUUID := strings.TrimSpace(stringFromAny(row["uuid"]))
+		if normalizeKey(rowUsername) == wanted || normalizeKey(rowUUID) == wanted {
+			if rowUsername != "" {
+				return rowUsername
 			}
 		}
 	}
@@ -433,14 +422,6 @@ func (u *userDAO) getDragonCoreXrayExpirationDate(ctx context.Context, lookup ma
 }
 
 func (u *userDAO) listDragonCoreXrayUsers(ctx context.Context) []xrayIdentity {
-	xrayListCache.Lock()
-	if time.Now().Before(xrayListCache.expires) && xrayListCache.items != nil {
-		items := append([]xrayIdentity(nil), xrayListCache.items...)
-		xrayListCache.Unlock()
-		return items
-	}
-	xrayListCache.Unlock()
-
 	outputs := []string{}
 
 	if output, err := u.executeCommand(ctx, fmt.Sprintf("%s %s xrayListUsers", shellQuote(phpBin()), shellQuote(dragonCoreMenuPath()))); err == nil && strings.TrimSpace(output) != "" {
@@ -474,10 +455,6 @@ func (u *userDAO) listDragonCoreXrayUsers(ctx context.Context) []xrayIdentity {
 			}
 		}
 	}
-	xrayListCache.Lock()
-	xrayListCache.items = append([]xrayIdentity(nil), items...)
-	xrayListCache.expires = time.Now().Add(2 * time.Second)
-	xrayListCache.Unlock()
 	return items
 }
 
