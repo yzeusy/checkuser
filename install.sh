@@ -22,6 +22,19 @@ BLUE='\033[1;34m'
 CYAN='\033[1;36m'
 NC='\033[0m'
 
+return_to_gestorvps() {
+  clear 2>/dev/null || true
+  if command -v gestorvps >/dev/null 2>&1; then
+    exec gestorvps
+  elif [[ -x /usr/local/bin/gestorvps ]]; then
+    exec /usr/local/bin/gestorvps
+  elif [[ -x /opt/.gestorvps/gestorvps.sh ]]; then
+    exec bash /opt/.gestorvps/gestorvps.sh
+  else
+    exit 0
+  fi
+}
+
 require_root() {
   if [[ "$(id -u)" != "0" ]]; then
     echo -e "${RED}Execute como root/sudo.${NC}"
@@ -872,7 +885,7 @@ while true; do
     4|04) ${EDITOR:-nano} /etc/checkuser/checkuser.env; systemctl restart checkuser || true; pause ;;
     5|05)
       if [[ -x /opt/checkuser-installer/install.sh ]]; then
-        sudo bash /opt/checkuser-installer/install.sh
+        exec sudo bash /opt/checkuser-installer/install.sh
       else
         echo -e "${RED}Instalador local não encontrado em /opt/checkuser-installer/install.sh.${NC}"
         echo "Baixe novamente o instalador e execute: sudo bash install.sh"
@@ -880,7 +893,7 @@ while true; do
       fi
       ;;
     6|06) configure_cloudflare_menu ;;
-    0|00) exit 0 ;;
+    0|00) return_to_gestorvps ;;
     *) echo -e "${RED}Opção inválida.${NC}"; sleep 1 ;;
   esac
 done
@@ -1468,10 +1481,10 @@ show_menu() {
   echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
   echo -e "${CYAN}║${NC}        ${YELLOW}CHECKUSER DTUNNEL${NC}"
   echo -e "${CYAN}╠══════════════════════════════════════════════╣${NC}"
-  echo -e "${CYAN}║${NC} Status: ${installed} | Serviço: $(service_status_text)"
+  echo -e "${CYAN}║${NC} Status: ${installed}"
   echo -e "${CYAN}╠══════════════════════════════════════════════╣${NC}"
   echo -e "${CYAN}║${NC} ${GREEN}1${NC}. Instalar/Atualizar"
-  echo -e "${CYAN}║${NC} ${GREEN}2${NC}. Desinstalar e fechar porta 2052"
+  echo -e "${CYAN}║${NC} ${GREEN}2${NC}. Desinstalar"
   echo -e "${CYAN}║${NC} ${GREEN}3${NC}. Limpar DeviceID"
   echo -e "${CYAN}║${NC} ${GREEN}4${NC}. Testar endpoint"
   echo -e "${CYAN}║${NC} ${GREEN}5${NC}. Configurar Cloudflare"
@@ -1491,7 +1504,7 @@ main() {
       3|03) clear_deviceid ;;
       4|04) test_endpoint ;;
       5|05) configure_cloudflare ;;
-      0|00) exit 0 ;;
+      0|00) return_to_gestorvps ;;
       *) echo -e "${RED}Opção inválida.${NC}"; sleep 1 ;;
     esac
   done
