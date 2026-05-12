@@ -621,32 +621,53 @@ cf_require_success() {
   return 0
 }
 
+cf_token_valid() {
+  local token="$1"
+  local response ok
+  token="$(printf '%s' "$token" | tr -d '\r\n' | sed 's/^ *//;s/ *$//')"
+  [[ -n "$token" ]] || return 1
+
+  response="$(cf_api_request "$token" GET "/user/tokens/verify" 2>/dev/null || true)"
+  ok="$(printf '%s' "$response" | jq -r '.success // false' 2>/dev/null || echo false)"
+  [[ "$ok" == "true" ]]
+}
+
 read_cf_token() {
   local saved=""
   if [[ -f "$ENV_FILE" ]]; then
     saved="$(grep -E '^CHECKUSER_CLOUDFLARE_API_TOKEN=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' || true)"
+    saved="$(printf '%s' "$saved" | tr -d '\r\n' | sed 's/^ *//;s/ *$//')"
   fi
 
   if [[ -n "$saved" ]]; then
-    read -r -p "Usar token Cloudflare salvo? [S/n]: " use_saved
-    if [[ -z "$use_saved" || "$use_saved" =~ ^[Ss]$ ]]; then
+    echo -e "${YELLOW}Validando token Cloudflare salvo...${NC}" >&2
+    if cf_token_valid "$saved"; then
+      echo -e "${GREEN}Token salvo válido. Prosseguindo automaticamente.${NC}" >&2
       printf '%s' "$saved"
       return 0
     fi
+    echo -e "${YELLOW}Token salvo inválido ou expirado. Informe um novo token.${NC}" >&2
   fi
 
   local token=""
-  read -r -s -p "Token API Cloudflare: " token
-  echo ""
-  if [[ -z "$token" ]]; then
-    echo -e "${RED}Token vazio.${NC}" >&2
-    return 1
-  fi
-  read -r -p "Salvar token nesta VPS para próximas configurações? [S/n]: " save_token
-  if [[ -z "$save_token" || "$save_token" =~ ^[Ss]$ ]]; then
-    set_env_key CHECKUSER_CLOUDFLARE_API_TOKEN "$token"
-  fi
-  printf '%s' "$token"
+  while true; do
+    read -r -p "Token API Cloudflare: " token
+    token="$(printf '%s' "$token" | tr -d '\r\n' | sed 's/^ *//;s/ *$//')"
+    if [[ -z "$token" ]]; then
+      echo -e "${RED}Token vazio.${NC}" >&2
+      return 1
+    fi
+
+    echo -e "${YELLOW}Validando novo token Cloudflare...${NC}" >&2
+    if cf_token_valid "$token"; then
+      set_env_key CHECKUSER_CLOUDFLARE_API_TOKEN "$token"
+      echo -e "${GREEN}Token válido e salvo automaticamente.${NC}" >&2
+      printf '%s' "$token"
+      return 0
+    fi
+
+    echo -e "${RED}Token inválido ou sem permissão. Tente novamente.${NC}" >&2
+  done
 }
 
 build_cf_hostname() {
@@ -906,14 +927,7 @@ install_checkuser() {
     normalize_public_host_env
     build_binary
     write_service_and_menu
-  }
-
-install_checkuser_with_cloudflare() {
-  install_checkuser
-  configure_cloudflare_auto
-}
-
- 2>&1 | tee -a "$LOG_DIR/install.log"
+  } 2>&1 | tee -a "$LOG_DIR/install.log"
 
   local public_ip public_host cloudflare_url
   public_ip="$(get_public_ip)"
@@ -945,13 +959,38 @@ install_checkuser_with_cloudflare() {
     echo "Consulta pública: http://IP_DA_VPS:2052?user=USUARIO"
   fi
 }
+
+install_checkuser_prompt_cloudflare() {
+  require_root
+  echo ""
+  read -r -p "Deseja atualizar o Cloudflare automático? [s/n]: " update_cf
+  if [[ "$update_cf" =~ ^[Ss]$ ]]; then
+    CF_AUTO_FLOW=1 configure_cloudflare || true
+  else
+    echo -e "${YELLOW}Cloudflare não atualizado. Pulando para a instalação...${NC}"
+  fi
+  install_checkuser
+  pause
+}
+
+install_checkuser_with_cloudflare() {
+  CF_AUTO_FLOW=1 configure_cloudflare || true
+  install_checkuser
+}
+
 uninstall_checkuser() {
   require_root
   systemctl stop checkuser >/dev/null 2>&1 || true
   systemctl disable checkuser >/dev/null 2>&1 || true
   rm -f "$SERVICE_FILE" "$STARTER_PATH" "$BIN_PATH" "$MENU_PATH"
+  rm -rf "$SRC_DIR" /opt/checkuser-installer
+  if command -v ufw >/dev/null 2>&1; then
+    ufw delete allow 2052/tcp >/dev/null 2>&1 || true
+    ufw deny 2052/tcp >/dev/null 2>&1 || true
+  fi
   systemctl daemon-reload
-  echo -e "${GREEN}CheckUser removido.${NC}"
+  systemctl reset-failed checkuser >/dev/null 2>&1 || true
+  echo -e "${GREEN}CheckUser removido e porta 2052 fechada no UFW, quando ativo.${NC}"
   pause
 }
 
@@ -1163,32 +1202,53 @@ cf_require_success() {
   return 0
 }
 
+cf_token_valid() {
+  local token="$1"
+  local response ok
+  token="$(printf '%s' "$token" | tr -d '\r\n' | sed 's/^ *//;s/ *$//')"
+  [[ -n "$token" ]] || return 1
+
+  response="$(cf_api_request "$token" GET "/user/tokens/verify" 2>/dev/null || true)"
+  ok="$(printf '%s' "$response" | jq -r '.success // false' 2>/dev/null || echo false)"
+  [[ "$ok" == "true" ]]
+}
+
 read_cf_token() {
   local saved=""
   if [[ -f "$ENV_FILE" ]]; then
     saved="$(grep -E '^CHECKUSER_CLOUDFLARE_API_TOKEN=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' || true)"
+    saved="$(printf '%s' "$saved" | tr -d '\r\n' | sed 's/^ *//;s/ *$//')"
   fi
 
   if [[ -n "$saved" ]]; then
-    read -r -p "Usar token Cloudflare salvo? [S/n]: " use_saved
-    if [[ -z "$use_saved" || "$use_saved" =~ ^[Ss]$ ]]; then
+    echo -e "${YELLOW}Validando token Cloudflare salvo...${NC}" >&2
+    if cf_token_valid "$saved"; then
+      echo -e "${GREEN}Token salvo válido. Prosseguindo automaticamente.${NC}" >&2
       printf '%s' "$saved"
       return 0
     fi
+    echo -e "${YELLOW}Token salvo inválido ou expirado. Informe um novo token.${NC}" >&2
   fi
 
   local token=""
-  read -r -s -p "Token API Cloudflare: " token
-  echo ""
-  if [[ -z "$token" ]]; then
-    echo -e "${RED}Token vazio.${NC}" >&2
-    return 1
-  fi
-  read -r -p "Salvar token nesta VPS para próximas configurações? [S/n]: " save_token
-  if [[ -z "$save_token" || "$save_token" =~ ^[Ss]$ ]]; then
-    set_env_key CHECKUSER_CLOUDFLARE_API_TOKEN "$token"
-  fi
-  printf '%s' "$token"
+  while true; do
+    read -r -p "Token API Cloudflare: " token
+    token="$(printf '%s' "$token" | tr -d '\r\n' | sed 's/^ *//;s/ *$//')"
+    if [[ -z "$token" ]]; then
+      echo -e "${RED}Token vazio.${NC}" >&2
+      return 1
+    fi
+
+    echo -e "${YELLOW}Validando novo token Cloudflare...${NC}" >&2
+    if cf_token_valid "$token"; then
+      set_env_key CHECKUSER_CLOUDFLARE_API_TOKEN "$token"
+      echo -e "${GREEN}Token válido e salvo automaticamente.${NC}" >&2
+      printf '%s' "$token"
+      return 0
+    fi
+
+    echo -e "${RED}Token inválido ou sem permissão. Tente novamente.${NC}" >&2
+  done
 }
 
 build_cf_hostname() {
@@ -1374,7 +1434,12 @@ configure_cloudflare() {
   echo ""
   echo "Link: ${cf_url}"
   echo "Teste: ${cf_url}/?user=USUARIO"
-  pause
+  if [[ "${CF_AUTO_FLOW:-0}" != "1" ]]; then
+    pause
+  else
+    echo ""
+    echo -e "${YELLOW}Continuando para a instalação...${NC}"
+  fi
 }
 
 install_status_text() {
@@ -1403,12 +1468,13 @@ show_menu() {
   echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
   echo -e "${CYAN}║${NC}        ${YELLOW}CHECKUSER DTUNNEL${NC}"
   echo -e "${CYAN}╠══════════════════════════════════════════════╣${NC}"
-  echo -e "${CYAN}║${NC} Status: ${installed}"
+  echo -e "${CYAN}║${NC} Status: ${installed} | Serviço: $(service_status_text)"
   echo -e "${CYAN}╠══════════════════════════════════════════════╣${NC}"
   echo -e "${CYAN}║${NC} ${GREEN}1${NC}. Instalar/Atualizar"
-  echo -e "${CYAN}║${NC} ${GREEN}2${NC}. Desinstalar"
+  echo -e "${CYAN}║${NC} ${GREEN}2${NC}. Desinstalar e fechar porta 2052"
   echo -e "${CYAN}║${NC} ${GREEN}3${NC}. Limpar DeviceID"
   echo -e "${CYAN}║${NC} ${GREEN}4${NC}. Testar endpoint"
+  echo -e "${CYAN}║${NC} ${GREEN}5${NC}. Configurar Cloudflare"
   echo -e "${CYAN}║${NC} ${RED}0${NC}. Sair"
   echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
   echo ""
@@ -1420,10 +1486,11 @@ main() {
     show_menu
     read -r opt
     case "$opt" in
-      1|01) install_checkuser; configure_cloudflare ;;
+      1|01) install_checkuser_prompt_cloudflare ;;
       2|02) uninstall_checkuser ;;
       3|03) clear_deviceid ;;
       4|04) test_endpoint ;;
+      5|05) configure_cloudflare ;;
       0|00) exit 0 ;;
       *) echo -e "${RED}Opção inválida.${NC}"; sleep 1 ;;
     esac
