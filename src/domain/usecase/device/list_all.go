@@ -9,6 +9,7 @@ import (
 type ListDevicesOutput struct {
 	ID       string `json:"id"`
 	Username string `json:"username"`
+	Limit    int    `json:"limit_connections"`
 }
 
 type ListDevicesUseCase struct {
@@ -31,6 +32,7 @@ func (l *ListDevicesUseCase) Execute(ctx context.Context) ([]*ListDevicesOutput,
 		result[i] = &ListDevicesOutput{
 			ID:       device.ID,
 			Username: device.Username,
+			Limit:    device.Limit,
 		}
 	}
 	return result, nil

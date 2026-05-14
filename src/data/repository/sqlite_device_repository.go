@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/labstack/gommon/log"
 	"github.com/zeusxprime/checkuser/src/domain/contract"
 	"github.com/zeusxprime/checkuser/src/domain/entity"
-	"github.com/labstack/gommon/log"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
@@ -74,10 +74,19 @@ func migrateDevicesTable(db *sql.DB) {
 		return
 	}
 
-	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS devices_v2 (id TEXT NOT NULL, username TEXT NOT NULL, PRIMARY KEY (id, username))`)
-	_, _ = db.Exec(`INSERT OR IGNORE INTO devices_v2 (id, username) SELECT id, username FROM devices WHERE id IS NOT NULL AND username IS NOT NULL`)
+	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS devices_v2 (id TEXT NOT NULL, username TEXT NOT NULL, limit_connections INTEGER NOT NULL DEFAULT 1, user_uuid TEXT DEFAULT '', created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (id, username))`)
+	_, _ = db.Exec(`INSERT OR IGNORE INTO devices_v2 (id, username, limit_connections, user_uuid) SELECT id, username, 1, '' FROM devices WHERE id IS NOT NULL AND username IS NOT NULL`)
 	_, _ = db.Exec(`DROP TABLE devices`)
 	_, _ = db.Exec(`ALTER TABLE devices_v2 RENAME TO devices`)
+}
+
+func ensureDevicesColumns(db *sql.DB) {
+	_, _ = db.Exec(`ALTER TABLE devices ADD COLUMN limit_connections INTEGER NOT NULL DEFAULT 1`)
+	_, _ = db.Exec(`ALTER TABLE devices ADD COLUMN user_uuid TEXT DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE devices ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP`)
+	_, _ = db.Exec(`ALTER TABLE devices ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_devices_username ON devices(username)`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_devices_uuid ON devices(user_uuid)`)
 }
 
 type SQLiteDeviceRepository struct {
@@ -95,17 +104,30 @@ func NewSQLiteDeviceRepository() contract.DeviceRepository {
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS devices (
 		id TEXT NOT NULL,
 		username TEXT NOT NULL,
+		limit_connections INTEGER NOT NULL DEFAULT 1,
+		user_uuid TEXT DEFAULT '',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		PRIMARY KEY (id, username)
 	)`)
 	if err != nil {
 		log.Fatal(err)
 	}
+	ensureDevicesColumns(db)
 
 	return &SQLiteDeviceRepository{db: db}
 }
 
 func (r *SQLiteDeviceRepository) Save(ctx context.Context, device *entity.Device) error {
-	_, err := r.db.ExecContext(ctx, "INSERT OR IGNORE INTO devices (id, username) VALUES (?, ?)", device.ID, device.Username)
+	limit := device.Limit
+	if limit <= 0 {
+		limit = 1
+	}
+	_, err := r.db.ExecContext(ctx, "INSERT OR IGNORE INTO devices (id, username, limit_connections, user_uuid) VALUES (?, ?, ?, ?)", device.ID, device.Username, limit, device.UUID)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.ExecContext(ctx, "UPDATE devices SET limit_connections = ?, user_uuid = COALESCE(NULLIF(?, ''), user_uuid), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND username = ?", limit, device.UUID, device.ID, device.Username)
 	if err != nil {
 		return err
 	}
@@ -122,7 +144,7 @@ func (r *SQLiteDeviceRepository) Exists(ctx context.Context, device *entity.Devi
 }
 
 func (r *SQLiteDeviceRepository) ListByUsername(ctx context.Context, username string) ([]*entity.Device, error) {
-	rows, err := r.db.QueryContext(ctx, "SELECT id, username FROM devices WHERE username = ?", username)
+	rows, err := r.db.QueryContext(ctx, "SELECT id, username, limit_connections, COALESCE(user_uuid, '') FROM devices WHERE username = ?", username)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +153,7 @@ func (r *SQLiteDeviceRepository) ListByUsername(ctx context.Context, username st
 	devices := []*entity.Device{}
 	for rows.Next() {
 		device := &entity.Device{}
-		err := rows.Scan(&device.ID, &device.Username)
+		err := rows.Scan(&device.ID, &device.Username, &device.Limit, &device.UUID)
 		if err != nil {
 			return nil, err
 		}
@@ -141,7 +163,7 @@ func (r *SQLiteDeviceRepository) ListByUsername(ctx context.Context, username st
 }
 
 func (r *SQLiteDeviceRepository) ListAll(ctx context.Context) ([]*entity.Device, error) {
-	rows, err := r.db.QueryContext(ctx, "SELECT id, username FROM devices")
+	rows, err := r.db.QueryContext(ctx, "SELECT id, username, limit_connections, COALESCE(user_uuid, '') FROM devices")
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +172,7 @@ func (r *SQLiteDeviceRepository) ListAll(ctx context.Context) ([]*entity.Device,
 	devices := []*entity.Device{}
 	for rows.Next() {
 		device := &entity.Device{}
-		err := rows.Scan(&device.ID, &device.Username)
+		err := rows.Scan(&device.ID, &device.Username, &device.Limit, &device.UUID)
 		if err != nil {
 			return nil, err
 		}
@@ -169,7 +191,7 @@ func (r *SQLiteDeviceRepository) DeleteByUsername(ctx context.Context, username 
 
 func (r *SQLiteDeviceRepository) CountByUsername(ctx context.Context, username string) (int, error) {
 	var count int
-	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM devices WHERE username = ?", username).Scan(&count)
+	err := r.db.QueryRowContext(ctx, "SELECT COUNT(DISTINCT id) FROM devices WHERE username = ?", username).Scan(&count)
 	if err != nil {
 		return 0, err
 	}
