@@ -317,8 +317,6 @@ def patch_checkuser_go(path: Path):
     new = 'ExpiresDays: remainingDays,\n\t\tExpiresIn:   remainingLabel,\n\t\tRemaining:   remainingLabel,\n\t\tDisplay:     remainingLabel,\n\t\tRemainValue: remainingValue,\n\t\tRemainUnit:  remainingUnit,'
     if old in s and 'ExpiresIn:   remainingLabel' not in s:
         s = s.replace(old, new, 1)
-    s = s.replace('\n\t"time"\n', '\n')
-    s = s.replace('\n\t"time"', '')
     path.write_text(s)
 
 
@@ -336,8 +334,6 @@ def patch_details_go(path: Path):
     new = 'ExpiresDays: remainingDays,\n\t\tExpiresIn:   remainingLabel,\n\t\tRemaining:   remainingLabel,\n\t\tDisplay:     remainingLabel,\n\t\tRemainValue: remainingValue,\n\t\tRemainUnit:  remainingUnit,'
     if old in s and 'ExpiresIn:   remainingLabel' not in s:
         s = s.replace(old, new, 1)
-    s = s.replace('\n\t"time"\n', '\n')
-    s = s.replace('\n\t"time"', '')
     path.write_text(s)
 
 
