@@ -217,15 +217,29 @@ ensure_go() {
 }
 
 clone_or_update_repo() {
-  progress 45 "baixando CheckUser do GitHub"
+  progress 45 "preparando CheckUser"
   rm -rf "$SRC_DIR"
-  git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$SRC_DIR" >/dev/null 2>&1 || {
-    echo -e "\n${RED}Erro ao clonar: $REPO_URL${NC}"
-    exit 1
-  }
+
+  # Se este instalador estiver dentro do pacote completo do CheckUser,
+  # usa os arquivos locais corrigidos. Isso evita baixar uma versão antiga
+  # do GitHub e recompilar com patch incompleto.
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -f "$script_dir/go.mod" && -d "$script_dir/src" ]]; then
+    mkdir -p "$SRC_DIR"
+    cp -a "$script_dir/." "$SRC_DIR/"
+  else
+    progress 45 "baixando CheckUser do GitHub"
+    git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$SRC_DIR" >/dev/null 2>&1 || {
+      echo -e "
+${RED}Erro ao clonar: $REPO_URL${NC}"
+      exit 1
+    }
+  fi
 
   if [[ ! -f "$SRC_DIR/go.mod" || ! -d "$SRC_DIR/src" ]]; then
-    echo -e "\n${RED}Repositório inválido: go.mod ou pasta src não encontrada.${NC}"
+    echo -e "
+${RED}Repositório inválido: go.mod ou pasta src não encontrada.${NC}"
     exit 1
   fi
 }
@@ -265,6 +279,7 @@ apply_expiration_hours_patch() {
 
   python3 <<'PYEOF'
 from pathlib import Path
+import re
 
 base = Path('.')
 helper = base / 'src/domain/usecase/user/expiration_format.go'
@@ -303,6 +318,14 @@ func expirationRemainingInfo(expiresAt time.Time) (string, int, int, string) {
 """)
 
 
+
+def ensure_go_import(src: str, pkg: str) -> str:
+    if f'"{pkg}"' in src:
+        return src
+    if 'import (\n' in src:
+        return src.replace('import (\n', f'import (\n\t"{pkg}"\n', 1)
+    return re.sub(r'import\s+"([^"]+)"', lambda m: 'import (\n\t"' + m.group(1) + '"\n\t"' + pkg + '"\n)', src, count=1)
+
 def patch_checkuser_go(path: Path):
     if not path.exists():
         return
@@ -317,6 +340,8 @@ def patch_checkuser_go(path: Path):
     new = 'ExpiresDays: remainingDays,\n\t\tExpiresIn:   remainingLabel,\n\t\tRemaining:   remainingLabel,\n\t\tDisplay:     remainingLabel,\n\t\tRemainValue: remainingValue,\n\t\tRemainUnit:  remainingUnit,'
     if old in s and 'ExpiresIn:   remainingLabel' not in s:
         s = s.replace(old, new, 1)
+    if 'time.' in s:
+        s = ensure_go_import(s, 'time')
     path.write_text(s)
 
 
@@ -334,6 +359,8 @@ def patch_details_go(path: Path):
     new = 'ExpiresDays: remainingDays,\n\t\tExpiresIn:   remainingLabel,\n\t\tRemaining:   remainingLabel,\n\t\tDisplay:     remainingLabel,\n\t\tRemainValue: remainingValue,\n\t\tRemainUnit:  remainingUnit,'
     if old in s and 'ExpiresIn:   remainingLabel' not in s:
         s = s.replace(old, new, 1)
+    if 'time.' in s:
+        s = ensure_go_import(s, 'time')
     path.write_text(s)
 
 
